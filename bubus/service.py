@@ -240,8 +240,8 @@ class EventBus:
         name: PythonIdentifierStr | None = None, 
         wal_path: Path | str | None = None, 
         parallel_handlers: bool = False,
-        max_history_size: int | None = None,
-        history_cleanup_threshold_seconds: float | None = None
+        max_history_size: int | None = 50,  # With 5MB per event, 50 events = 250MB
+        history_cleanup_threshold_seconds: float | None = 0  # Clean up completed events immediately
     ):
         self.id = uuid7str()
         self.name = name or f'{self.__class__.__name__}_{self.id[-8:]}'
@@ -476,6 +476,10 @@ class EventBus:
         # Note: We do NOT pre-create EventResults here anymore.
         # EventResults are created only when handlers actually start executing.
         # This avoids "orphaned" pending results for handlers that get filtered out later.
+        
+        # Cleanup if we're over the limit
+        if len(self.event_history) > self.max_history_size:
+            self.cleanup_event_history()
 
         return event
 
@@ -581,7 +585,9 @@ class EventBus:
 
                 # Create async objects if needed
                 if self.event_queue is None:
-                    self.event_queue = CleanShutdownQueue[BaseEvent]()
+                    # Limit queue size to prevent unbounded memory growth
+                    # With 5MB per event, we can only afford a small queue
+                    self.event_queue = CleanShutdownQueue[BaseEvent](maxsize=50)
                     self._on_idle = asyncio.Event()
                     self._on_idle.clear()  # Start in a busy state unless we confirm queue is empty by running _run_loop_step() at least once
 
@@ -764,9 +770,9 @@ class EventBus:
         # Mark event as complete if all handlers are done
         event.event_mark_complete_if_all_handlers_completed()
         
-        # Clean up old events to prevent memory leaks
-        if self.max_history_size or self.history_cleanup_threshold_seconds:
-            self.cleanup_event_history()
+        # Aggressively clean up events to prevent memory leaks
+        # With 5MB per event, we must clean up frequently
+        self.cleanup_event_history()
 
     def _get_applicable_handlers(self, event: BaseEvent) -> dict[str, EventHandler]:
         """Get all handlers that should process the given event, filtering out those that would create loops"""
@@ -1109,14 +1115,53 @@ class EventBus:
     
     def cleanup_event_history(self) -> int:
         """
-        Clean up event history using both time-based and size-based cleanup.
+        Clean up event history to maintain max_history_size limit.
+        Prioritizes keeping pending events over completed ones.
         
         Returns:
             Total number of events removed from history
         """
-        removed_by_time = self.cleanup_old_events()
-        removed_by_size = self.cleanup_excess_events()
-        return removed_by_time + removed_by_size
+        if not self.max_history_size or len(self.event_history) <= self.max_history_size:
+            return 0
+            
+        # Separate pending and completed events
+        pending_events = []
+        completed_events = []
+        
+        for event_id, event in self.event_history.items():
+            if event.event_status in ('completed', 'error'):
+                completed_events.append((event_id, event))
+            else:
+                pending_events.append((event_id, event))
+        
+        # Sort completed events by creation time (oldest first)
+        completed_events.sort(key=lambda x: x[1].event_created_at.timestamp())
+        
+        # Calculate how many events to remove
+        total_events = len(self.event_history)
+        events_to_remove_count = total_events - self.max_history_size
+        
+        events_to_remove = []
+        
+        # First remove completed events (oldest first)
+        if completed_events and events_to_remove_count > 0:
+            remove_from_completed = min(len(completed_events), events_to_remove_count)
+            events_to_remove.extend([event_id for event_id, _ in completed_events[:remove_from_completed]])
+            events_to_remove_count -= remove_from_completed
+        
+        # If still need to remove more, remove oldest pending events
+        if events_to_remove_count > 0:
+            pending_events.sort(key=lambda x: x[1].event_created_at.timestamp())
+            events_to_remove.extend([event_id for event_id, _ in pending_events[:events_to_remove_count]])
+        
+        # Remove the events
+        for event_id in events_to_remove:
+            del self.event_history[event_id]
+            
+        if events_to_remove:
+            logger.debug(f'🧹 {self} Cleaned up {len(events_to_remove)} events from history (kept {len(self.event_history)}/{self.max_history_size})')
+            
+        return len(events_to_remove)
 
     def log_tree(self) -> None:
         """Print a nice pretty formatted tree view of all events in the history including their results and child events recursively"""
