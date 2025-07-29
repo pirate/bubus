@@ -19,7 +19,8 @@
       "Bash(echo:*)",
       "Bash(done)",
       "Bash(do echo \"Run $i:\")",
-      "Bash(python -m pytest tests/test_event_bus_property.py -v)"
+      "Bash(python -m pytest tests/test_event_bus_property.py -v)",
+      "Bash(.venv/bin/pytest tests/ -v)"
     ],
     "deny": []
   }

@@ -726,6 +726,16 @@ class EventBus:
             # Remove from global instance tracking
             if self in EventBus.all_instances:
                 EventBus.all_instances.discard(self)
+            
+            # Remove from event loop's tracking if present
+            try:
+                loop = asyncio.get_running_loop()
+                if hasattr(loop, '_eventbus_instances'):
+                    loop._eventbus_instances.discard(self)  # type: ignore
+            except RuntimeError:
+                # No running loop, that's fine
+                pass
+            
             logger.debug(f'🧹 {self} cleared event history and removed from global tracking')
 
         logger.debug(f'🛑 {self} shut down gracefully' if timeout is not None else f'🛑 {self} killed')
