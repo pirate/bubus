@@ -1610,5 +1610,6 @@ class TestComplexIntegration:
             assert 'expects all handlers to return a list' in caplog.text
 
         finally:
-            await app_bus.stop()
-            await auth_bus.stop()
+            await app_bus.stop(timeout=0, clear=True)
+            await auth_bus.stop(timeout=0, clear=True)
+            await data_bus.stop(timeout=0, clear=True)
