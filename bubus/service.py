@@ -561,9 +561,9 @@ class EventBus:
     async def expect(
         self,
         event_type: type[T_ExpectedEvent],
-        include: Callable[[T_ExpectedEvent], bool] = lambda e: True,
-        exclude: Callable[[T_ExpectedEvent], bool] = lambda e: False,
-        predicate: Callable[[T_ExpectedEvent], bool] = lambda e: True,  # deprecated, alias for include
+        include: Callable[[BaseEvent | T_ExpectedEvent], bool] = lambda _: True,
+        exclude: Callable[[BaseEvent | T_ExpectedEvent], bool] = lambda _: False,
+        predicate: Callable[[BaseEvent | T_ExpectedEvent], bool] = lambda _: True,  # deprecated, alias for include
         timeout: float | None = None,
     ) -> T_ExpectedEvent: ...
 
@@ -571,20 +571,20 @@ class EventBus:
     async def expect(
         self,
         event_type: PythonIdentifierStr,
-        include: Callable[[BaseEvent], bool] = lambda e: True,
-        exclude: Callable[[BaseEvent], bool] = lambda e: False,
-        predicate: Callable[[BaseEvent], bool] = lambda e: True,  # deprecated, alias for include
+        include: Callable[[BaseEvent], bool] = lambda _: True,
+        exclude: Callable[[BaseEvent], bool] = lambda _: False,
+        predicate: Callable[[BaseEvent], bool] = lambda _: True,  # deprecated, alias for include
         timeout: float | None = None,
     ) -> BaseEvent: ...
 
     async def expect(
         self,
-        event_type: PythonIdentifierStr | type[BaseEvent],
-        include: Callable[[BaseEvent], bool] = lambda e: True,
-        exclude: Callable[[BaseEvent], bool] = lambda e: False,
-        predicate: Callable[[BaseEvent], bool] = lambda e: True,  # deprecated, alias for include
+        event_type: PythonIdentifierStr | type[T_ExpectedEvent],
+        include: Callable[[BaseEvent], bool] = lambda _: True,
+        exclude: Callable[[BaseEvent], bool] = lambda _: False,
+        predicate: Callable[[BaseEvent], bool] = lambda _: True,  # deprecated, alias for include
         timeout: float | None = None,
-    ) -> BaseEvent:
+    ) -> BaseEvent | T_ExpectedEvent:
         """
         Wait for an event matching the given type/pattern with optional filters.
 

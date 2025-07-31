@@ -293,9 +293,9 @@ class TestHandlerRegistration:
         processor2 = EventProcessor('Processor2', 20)
 
         # Register instance methods
-        eventbus.on('UserActionEvent', processor1.sync_method_handler)
-        eventbus.on('UserActionEvent', processor1.async_method_handler)
-        eventbus.on('UserActionEvent', processor2.sync_method_handler)
+        eventbus.on(UserActionEvent, processor1.sync_method_handler)
+        eventbus.on(UserActionEvent, processor1.async_method_handler)
+        eventbus.on(UserActionEvent, processor2.sync_method_handler)
 
         # Register class and static methods
         eventbus.on('UserActionEvent', EventProcessor.class_method_handler)

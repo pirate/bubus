@@ -219,7 +219,7 @@ class BaseEvent(BaseModel):
             else '🏃'
         )
         # AuthBus≫DataBus▶ AuthLoginEvent#ab12 ⏳
-        return f'{"≫".join(self.event_path[1:] or '?')}▶ {self.event_type}#{self.event_id[-4:]} {icon}'
+        return f'{"≫".join(self.event_path[1:] or "?")}▶ {self.event_type}#{self.event_id[-4:]} {icon}'
 
     def __await__(self) -> Generator[Self, Any, Any]:
         """Wait for event to complete and return self"""
