@@ -46,6 +46,7 @@ class QueueShutDown(Exception):
 
 
 QueueEntryType = TypeVar('QueueEntryType', bound=BaseEvent)
+T_ExpectedEvent = TypeVar('T_ExpectedEvent', bound=BaseEvent)
 
 EventPatternType = PythonIdentifierStr | Literal['*'] | type[BaseEvent]
 
@@ -556,19 +557,43 @@ class EventBus:
 
         return event
 
+    @overload
+    async def expect(
+        self,
+        event_type: type[T_ExpectedEvent],
+        include: Callable[[T_ExpectedEvent], bool] = lambda e: True,
+        exclude: Callable[[T_ExpectedEvent], bool] = lambda e: False,
+        predicate: Callable[[T_ExpectedEvent], bool] = lambda e: True,  # deprecated, alias for include
+        timeout: float | None = None,
+    ) -> T_ExpectedEvent: ...
+
+    @overload
+    async def expect(
+        self,
+        event_type: PythonIdentifierStr,
+        include: Callable[[BaseEvent], bool] = lambda e: True,
+        exclude: Callable[[BaseEvent], bool] = lambda e: False,
+        predicate: Callable[[BaseEvent], bool] = lambda e: True,  # deprecated, alias for include
+        timeout: float | None = None,
+    ) -> BaseEvent: ...
+
     async def expect(
         self,
         event_type: PythonIdentifierStr | type[BaseEvent],
+        include: Callable[[BaseEvent], bool] = lambda e: True,
+        exclude: Callable[[BaseEvent], bool] = lambda e: False,
+        predicate: Callable[[BaseEvent], bool] = lambda e: True,  # deprecated, alias for include
         timeout: float | None = None,
-        predicate: Callable[[BaseEvent], bool] | None = None,
     ) -> BaseEvent:
         """
-        Wait for an event matching the given type/pattern with optional predicate filter.
+        Wait for an event matching the given type/pattern with optional filters.
 
         Args:
                 event_type: The event type string or model class to wait for
-                timeout: Maximum time to wait in seconds (None = wait forever)
-                predicate: Optional filter function that must return True for the event to match
+                include: Filter function that must return True for the event to match (default: lambda e: True)
+                exclude: Filter function that must return False for the event to match (default: lambda e: False)
+                predicate: Deprecated name, alias for include (default: lambda e: True)
+                timeout: Maximum time to wait in seconds as a float (None = wait forever)
 
         Returns:
                 The first matching event
@@ -580,25 +605,38 @@ class EventBus:
                 # Wait for any response event
                 response = await eventbus.expect('ResponseEvent', timeout=30)
 
-                # Wait for specific response with predicate
+                # Wait for specific response with include filter
                 response = await eventbus.expect(
                         'ResponseEvent',
-                        predicate=lambda e: e.request_id == my_request_id,
+                        include=lambda e: e.request_id == my_request_id,
+                        timeout=30
+                )
+
+                # Wait for response excluding certain types
+                response = await eventbus.expect(
+                        'ResponseEvent',
+                        exclude=lambda e: e.error_code is not None,
                         timeout=30
                 )
         """
         future: asyncio.Future[BaseEvent] = asyncio.Future()
 
+        # Handle backwards compatibility: merge predicate into include
+        if predicate is not None:
+            original_include = include
+            include = lambda e, orig=original_include, pred=predicate: orig(e) and pred(e)
+
         def notify_expect_handler(event: BaseEvent) -> None:
             """Handler that resolves the future when a matching event is found"""
-            if not future.done() and (predicate is None or predicate(event)):
+            if not future.done() and include(event) and not exclude(event):
                 future.set_result(event)
 
+        # make debugging otherwise ephemeral async expect handlers easier by including some metadata in the stacktrace func names
         current_frame = inspect.currentframe()
         assert current_frame
-        notify_expect_handler.__name__ = f'{self}.expect({event_type}, predicate={predicate and id(predicate)})@{_log_pretty_path(current_frame.f_code.co_filename)}:{current_frame.f_lineno}'  # add file and line number to the name
+        notify_expect_handler.__name__ = f'{self}.expect({event_type}, timeout={timeout})@{_log_pretty_path(current_frame.f_code.co_filename)}:{current_frame.f_lineno}'  # add file and line number to the name
 
-        # Register temporary handler
+        # Register temporary listener that watches for matching events and triggers the expect handler
         self.on(event_type, notify_expect_handler)
 
         try:
@@ -726,7 +764,7 @@ class EventBus:
             # Remove from global instance tracking
             if self in EventBus.all_instances:
                 EventBus.all_instances.discard(self)
-            
+
             # Remove from event loop's tracking if present
             try:
                 loop = asyncio.get_running_loop()
@@ -735,7 +773,7 @@ class EventBus:
             except RuntimeError:
                 # No running loop, that's fine
                 pass
-            
+
             logger.debug(f'🧹 {self} cleared event history and removed from global tracking')
 
         logger.debug(f'🛑 {self} shut down gracefully' if timeout is not None else f'🛑 {self} killed')

@@ -119,7 +119,7 @@ async def test_20k_events_with_memory_control():
     assert len(bus.event_history) <= bus.max_history_size, (
         f'Event history has {len(bus.event_history)} events, should be <= {bus.max_history_size}'
     )
-    
+
     # Explicitly clean up the bus to prevent hanging
     await bus.stop(timeout=0, clear=True)
 

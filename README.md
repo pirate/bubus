@@ -302,15 +302,37 @@ Wait for specific events to be seen on a bus with optional filtering:
 
 ```python
 # Block until a specific event is seen (with optional timeout)
-request_event = await bus.dispatch(RequestEvent(...))
-response_event = await bus.expect('ResponseEvent', timeout=30)
+request_event = await bus.dispatch(RequestEvent(id=123, table='invoices', request_id=999234))
+response_event = await bus.expect(ResponseEvent, timeout=30)
+```
 
-# Block until a specific event is seen (with optional predicate filtering)
-response_event = await bus.expect(
-    ResponseEvent,  # can pass event type as a string or class
-    predicate=lambda e: e.request_id == my_request_id,
-    timeout=30
-)
+A more complex real-world example showing off all the features:
+
+```python
+async def on_generate_invoice_pdf(event: GenerateInvoiceEvent) -> pdf:
+    request_event = await bus.dispatch(APIRequestEvent(  # example: fire a backend request via some RPC client using bubus
+        method='invoices.generatePdf',
+        invoice_id=event.invoice_id,
+        request_id=uuid4(),
+    ))
+    # ...rpc client should send the request, then call event_bus.dispatch(APIResponseEvent(...)) when it gets a response ...
+
+    # wait for the response event to be fired by the RPC client
+    is_our_response = lambda response_event: response_event.request_id == request_event.request_id
+    is_succesful = lambda response_event: response_event.invoice_id == event.invoice_id and response_event.invoice_url
+    try:
+        response_event: APIResponseEvent = await bus.expect(
+            APIResponseEvent,                                         # wait for events of this type (also accepts str name)
+            include=lambda e: is_our_response(e) and is_succesful(e), # only include events that match a certain filter func
+            exclude=lambda e: e.status != 'retrying',                 # optionally exclude certain events, overrides include
+            timeout=30,                                               # raises asyncio.TimeoutError if no match is seen within 30sec
+        )
+    except asyncio.TimeoutError:
+        await bus.dispatch(TimedOutError(msg='timed out while waiting for response from server', request_id=request_event.id))
+
+    return response_event.invoice_url
+
+event_bus.on(GenerateInvoiceEvent, on_generate_invoice_pdf)
 ```
 
 > [!IMPORTANT]
@@ -318,17 +340,21 @@ response_event = await bus.expect(
 
 ### 📝 Write-Ahead Logging
 
-Persist events automatically for durability and debugging:
+Persist events automatically to a `jsonl` file for future replay and debugging:
 
 ```python
-# Enable WAL persistence
+# Enable WAL event log persistence (optional)
 bus = EventBus(name='MyBus', wal_path='./events.jsonl')
 
-# All completed events are automatically persisted
-bus.dispatch(ImportantEvent(data="critical"))
+# All completed events are automatically appended as JSON lines to the end
+bus.dispatch(SecondEventAbc(some_key="banana"))
+```
 
-# Events are saved as JSONL for easy processing
-# {"event_type": "ImportantEvent", "data": "critical", ...}
+`./events.jsonl`:
+```json
+{"event_type": "FirstEventXyz", "event_created_at": "2025-07-10T20:39:56.462000+00:00", "some_key": "some_val", ...}
+{"event_type": "SecondEventAbc", ..., "some_key": "banana"}
+...
 ```
 
 <br/>
