@@ -153,10 +153,10 @@ print(event.event_path)  # ['MainBus', 'AuthBus', 'DataBus']  # list of buses th
 Collect and aggregate results from multiple handlers:
 
 ```python
-async def load_user_config(event):
+async def load_user_config(event) -> dict[str, Any]:
     return {"debug": True, "port": 8080}
 
-async def load_system_config(event):
+async def load_system_config(event) -> dict[str, Any]:
     return {"debug": False, "timeout": 30}
 
 bus.on('GetConfig', load_user_config)
@@ -164,11 +164,11 @@ bus.on('GetConfig', load_system_config)
 
 # Get a merger of all dict results
 event = await bus.dispatch(GetConfig())
-config = await event.event_results_flat_dict()
+config = await event.event_results_flat_dict(raise_if_conflicts=False)
 # {'debug': False, 'port': 8080, 'timeout': 30}
 
 # Or get individual results
-results = await event.event_results_by_handler_id()
+results = await event.event_results()
 ```
 
 ### 🚦 FIFO Event Processing
@@ -186,10 +186,10 @@ await bus.wait_until_idle()
 
 If a handler dispatches and awaits any child events during execution, those events will jump the FIFO queue and be processed immediately:
 ```python
-def child_handler(event: SomeOtherEvent):
+def child_handler(event: SomeOtherEvent) -> str:
     return 'xzy123'
 
-def main_handler(event: MainEvent):
+def main_handler(event: MainEvent) -> str:
     # enqueue event for processing after main_handler exits
     child_event = bus.dispatch(SomeOtherEvent())
     
@@ -357,6 +357,98 @@ bus.dispatch(SecondEventAbc(some_key="banana"))
 ...
 ```
 
+### 🎯 Event Return Values
+
+There are two ways to get return values from event handlers:
+
+**1. Have handlers return their values directly, which puts them in `event.event_results`:**
+
+```python
+def do_some_math(event: DoSomeMathEvent[int]) -> int:                                                                                                                        
+    return event.a + event.b
+
+event_bus.on(DoSomeMathEvent, do_some_math)
+print(await event_bus.dispatch(DoSomeMathEvent(a=100, b=120)).event_result())
+# 220
+```
+
+**2. Have the handler do the work, then dispatch another event containing the result value, which other code can expect:**
+
+```python
+def do_some_math(event: DoSomeMathEvent[int]) -> int:
+    result = event.a + event.b
+    event.event_bus.dispatch(MathCompleteEvent(final_sum=result))
+
+event_bus.on(DoSomeMathEvent, do_some_math)
+await event_bus.dispatch(DoSomeMathEvent(a=100, b=120))
+result_event = await event_bus.expect(MathCompleteEvent)
+print(result_event.final_sum)
+# 220
+```
+
+#### Type-Safe Return Values with Generics
+
+If you end up having handlers return their values directly, you can take advantage of `event_result_type` enforcement via generics:
+
+```python
+# To make an event that expects all handlers to return bytes, you would define it like so:
+
+class ScreenshotEvent(BaseEvent[bytes]):
+    event_result_type = bytes
+
+    url: str
+    width: int = 1440
+    height: int = 1990
+
+async def on_ScreenshotEvent(event: ScreenshotEvent) -> bytes:
+    return await ScreenshotHelper.screenshot_to_bytes(
+        event.url, 
+        {'width': event.width, 'height': event.height}
+    )
+
+event_bus.on(ScreenshotEvent, on_ScreenshotEvent)
+
+screenshot = await event_bus.dispatch(ScreenshotEvent(url='https://example.com')).event_result()
+assert isinstance(screenshot, bytes), 'bubus will enforce that event_result() will only return bytes, or raise an exception if no handler has returned bytes'
+```
+
+You can also define more complex expected return values using Pydantic models:
+
+```python
+class EmailMessage(BaseModel):
+    subject: str
+    content_len: int
+    email_from: str
+    ...
+
+### Events
+class FetchInboxEvent(BaseEvent[list[EmailMessage]]): # <-- set BaseEvent[ResultTypeHere] for static type hints in IDE
+    account_id: UUID
+    auth_key: str
+
+    event_result_type = list[EmailMessage] # <----- set event_result_type to enforce return value types at runtime
+
+### Handlers
+async def fetch_from_gmail(event: FetchInboxEvent) -> list[EmailMessage]:
+    if not GoogleAPI.account_exists(event.account_id):
+        raise Exception('credentials not applicable / not working for Gmail')
+    return [EmailMessage(subject=msg.subj, ...) for msg in GmailAPI.get_msgs(event.account_id, ...)] # return types are enforced statically & at runtime
+
+async def fetch_from_yahoo(event: FetchInboxEvent) -> list[EmailMessage]:
+    if not YahooAPI.account_exists(event.account_id):
+        raise Exception('credentials not applicable / not working for Yahoo')
+    return [EmailMessage(subject=msg.subj, ...) for msg in YahooAPI.get_msgs(event.account_id, ...)]
+
+event_bus.on(FetchInboxEvent, fetch_from_gmail)
+event_bus.on(FetchInboxEvent, fetch_from_yahoo)
+
+### Example Usage
+fetch_event = FetchInboxEvent(account_id='124', ...)
+all_emails = await event_bus.dispatch(fetch_event).event_results_flat_list(raise_if_any=False)  # ignores any exceptions and flatten list results into one list
+print(all_emails)
+# [EmailMessage(...), EmailMessage(...), EmailMessage(...), ...]
+```
+
 <br/>
 
 ---
@@ -466,7 +558,9 @@ Make sure none of your own event data fields start with `event_` or `model_` to 
 #### `BaseEvent` Fields
 
 ```python
-class BaseEvent(BaseModel):
+T_EventResultType = TypeVar('T_EventResultType', bound=Any, default=None)
+
+class BaseEvent(BaseModel, Generic[T_EventResultType]):
     # Framework-managed fields
     event_type: str              # Defaults to class name
     event_id: str                # Unique UUID7 identifier, auto-generated if not provided
@@ -476,6 +570,7 @@ class BaseEvent(BaseModel):
     event_path: list[str]        # List of bus names traversed (auto-set)
     event_created_at: datetime   # When event was created, auto-generated
     event_results: dict[str, EventResult]   # Handler results
+    event_result_type: T_EventResultType = None
     
     # Data fields
     # ... subclass BaseEvent to add your own event data fields here ...
@@ -494,6 +589,7 @@ class BaseEvent(BaseModel):
 - `event_completed_at`: `datetime` When all handlers completed processing
 - `event_children`: `list[BaseEvent]` Get any child events emitted during handling of this event
 - `event_bus`: `EventBus` Shortcut to get the bus currently processing this event
+- `event_result_type`: `type[Any] | None` Optional type/pydantic model to enforce for event handler return values
 
 #### `BaseEvent` Methods
 
@@ -509,48 +605,119 @@ raw_result_values = [(await event_result) for event_result in completed_event.ev
 # equivalent to: completed_event.event_results_list()  (see below)
 ```
 
-##### `event_result(timeout: float | None=None) -> Any`
+##### `event_result(timeout: float | None=None, include: EventResultFilter=None, raise_if_any: bool=True, raise_if_none: bool=True) -> Any`
 
 Utility method helper to execute all the handlers and return the first handler's raw result value.
 
+**Parameters:**
+
+- `timeout`: Maximum time to wait for handlers to complete (None = use default event timeout)
+- `include`: Filter function to include only specific results (default: only non-None, non-exception results)
+- `raise_if_any`: If `True`, raise exception if any handler raises any `Exception` (`default: True`)
+- `raise_if_none`: If `True`, raise exception if results are empty / all results are `None` or `Exception` (`default: True`)
+
 ```python
+# by default it returns the first successful non-None result value
 result = await event.event_result()
+
+# Get result from first handler that returns a string
+valid_result = await event.event_result(include=lambda r: isinstance(r.result, str) and len(r.result) > 100)
+
+# Get result but don't raise exceptions or error for 0 results, just return None
+result_or_none = await event.event_result(raise_if_any=False, raise_if_none=False)
 ```
 
-##### `event_results_by_handler_id(timeout: float | None=None) -> dict`
+##### `event_results_by_handler_id(timeout: float | None=None, include: EventResultFilter=None, raise_if_any: bool=True, raise_if_none: bool=True) -> dict`
 
 Utility method helper to get all raw result values organized by `{handler_id: result_value}`.
 
+**Parameters:**
+
+- `timeout`: Maximum time to wait for handlers to complete (None = use default event timeout)
+- `include`: Filter function to include only specific results (default: only non-None, non-exception results)
+- `raise_if_any`: If `True`, raise exception if any handler raises any `Exception` (`default: True`)
+- `raise_if_none`: If `True`, raise exception if results are empty / all results are `None` or `Exception` (`default: True`)
+
 ```python
+# by default it returns all successful non-None result values
 results = await event.event_results_by_handler_id()
 # {'handler_id_1': result1, 'handler_id_2': result2}
+
+# Only include results from handlers that returned integers
+int_results = await event.event_results_by_handler_id(include=lambda r: isinstance(r.result, int))
+
+# Get all results including errors and None values
+all_results = await event.event_results_by_handler_id(raise_if_any=False, raise_if_none=False)
 ```
 
-##### `event_results_list(timeout: float | None=None) -> list[Any]`
+##### `event_results_list(timeout: float | None=None, include: EventResultFilter=None, raise_if_any: bool=True, raise_if_none: bool=True) -> list[Any]`
 
 Utility method helper to get all raw result values in a list.
 
+**Parameters:**
+
+- `timeout`: Maximum time to wait for handlers to complete (None = use default event timeout)
+- `include`: Filter function to include only specific results (default: only non-None, non-exception results)
+- `raise_if_any`: If `True`, raise exception if any handler raises any `Exception` (`default: True`)
+- `raise_if_none`: If `True`, raise exception if results are empty / all results are `None` or `Exception` (`default: True`)
+
 ```python
+# by default it returns all successful non-None result values
 results = await event.event_results_list()
 # [result1, result2]
+
+# Only include results that are strings longer than 10 characters
+filtered_results = await event.event_results_list(include=lambda r: isinstance(r.result, str) and len(r.result) > 10)
+
+# Get all results without raising on errors
+all_results = await event.event_results_list(raise_if_any=False, raise_if_none=False)
 ```
 
-##### `event_results_flat_dict(timeout: float | None=None) -> dict`
+##### `event_results_flat_dict(timeout: float | None=None, include: EventResultFilter=None, raise_if_any: bool=True, raise_if_none: bool=False, raise_if_conflicts: bool=True) -> dict`
 
 Utility method helper to merge all raw result values that are `dict`s into a single flat `dict`.
 
+**Parameters:**
+
+- `timeout`: Maximum time to wait for handlers to complete (None = use default event timeout)
+- `include`: Filter function to include only specific results (default: only non-None, non-exception results)
+- `raise_if_any`: If `True`, raise exception if any handler raises any `Exception` (`default: True`)
+- `raise_if_none`: If `True`, raise exception if results are empty / all results are `None` or `Exception` (`default: False`)
+- `raise_if_conflicts`: If `True`, raise exception if dict keys conflict between handlers (`default: True`)
+
 ```python
+# by default it merges all successful dict results
 results = await event.event_results_flat_dict()
 # {'key1': 'value1', 'key2': 'value2'}
+
+# Merge only dicts with specific keys
+config_dicts = await event.event_results_flat_dict(include=lambda r: isinstance(r.result, dict) and 'config' in r.result)
+
+# Allow conflicts, last handler wins
+merged = await event.event_results_flat_dict(raise_if_conflicts=False)
 ```
 
-##### `event_results_flat_list(timeout: float | None=None) -> list`
+##### `event_results_flat_list(timeout: float | None=None, include: EventResultFilter=None, raise_if_any: bool=True, raise_if_none: bool=True) -> list`
 
 Utility method helper to merge all raw result values that are `list`s into a single flat `list`.
 
+**Parameters:**
+
+- `timeout`: Maximum time to wait for handlers to complete (None = use default event timeout)
+- `include`: Filter function to include only specific results (default: only non-None, non-exception results)
+- `raise_if_any`: If `True`, raise exception if any handler raises any `Exception` (`default: True`)
+- `raise_if_none`: If `True`, raise exception if results are empty / all results are `None` or `Exception` (`default: True`)
+
 ```python
+# by default it merges all successful list results
 results = await event.event_results_flat_list()
 # ['item1', 'item2', 'item3']
+
+# Merge only lists with more than 2 items
+long_lists = await event.event_results_flat_list(include=lambda r: isinstance(r.result, list) and len(r.result) > 2)
+
+# Get all list results without raising on errors
+all_items = await event.event_results_flat_list(raise_if_any=False, raise_if_none=False)
 ```
 
 ##### `event_bus` (property)
