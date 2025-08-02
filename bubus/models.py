@@ -1,15 +1,14 @@
-from __future__ import annotations
-
 import asyncio
 import inspect
 import logging
 import os
 from collections.abc import Awaitable, Callable, Generator
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, Self, TypeAlias, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Protocol, Self, TypeAlias, cast, runtime_checkable
 from uuid import UUID
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, PrivateAttr, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, PrivateAttr, TypeAdapter, model_validator
+from typing_extensions import TypeVar  # needed to get TypeVar(default=...) above python 3.11
 from uuid_extensions import uuid7str
 
 if TYPE_CHECKING:
@@ -42,13 +41,14 @@ def validate_uuid_str(s: str) -> str:
 UUIDStr: TypeAlias = Annotated[str, AfterValidator(validate_uuid_str)]
 PythonIdStr: TypeAlias = Annotated[str, AfterValidator(validate_python_id_str)]
 PythonIdentifierStr: TypeAlias = Annotated[str, AfterValidator(validate_event_name)]
+T_EventResultType = TypeVar('T_EventResultType', bound=Any, default=None)
 # TypeVar for BaseEvent and its subclasses
 # We use contravariant=True because if a handler accepts BaseEvent,
 # it can also handle any subclass of BaseEvent
-T_Event = TypeVar('T_Event', bound='BaseEvent', contravariant=True)
+T_Event = TypeVar('T_Event', bound='BaseEvent[Any]', contravariant=True, default='BaseEvent[Any]')
 
 # For protocols with __func__ attributes, we need an invariant TypeVar
-T_EventInvariant = TypeVar('T_EventInvariant', bound='BaseEvent')
+T_EventInvariant = TypeVar('T_EventInvariant', bound='BaseEvent[Any]', default='BaseEvent[Any]')
 
 # For handlers, we need to be flexible about the signature since:
 # 1. Functions take just the event: handler(event)
@@ -119,12 +119,12 @@ class AsyncEventHandlerClassMethod(Protocol[T_EventInvariant]):
 # The protocols are parameterized with BaseEvent but due to contravariance,
 # they also accept handlers that take any BaseEvent subclass
 EventHandler: TypeAlias = (
-    EventHandlerFunc['BaseEvent']
-    | AsyncEventHandlerFunc['BaseEvent']
-    | EventHandlerMethod['BaseEvent']
-    | AsyncEventHandlerMethod['BaseEvent']
-    | EventHandlerClassMethod['BaseEvent']
-    | AsyncEventHandlerClassMethod['BaseEvent']
+    EventHandlerFunc['BaseEvent[Any]']
+    | AsyncEventHandlerFunc['BaseEvent[Any]']
+    | EventHandlerMethod['BaseEvent[Any]']
+    | AsyncEventHandlerMethod['BaseEvent[Any]']
+    | EventHandlerClassMethod['BaseEvent[Any]']
+    | AsyncEventHandlerClassMethod['BaseEvent[Any]']
     # | Callable[['BaseEvent'], Any]  # Simple sync callable
     # | Callable[['BaseEvent'], Awaitable[Any]]  # Simple async callable
     # | Coroutine[Any, Any, Any]  # Direct coroutine
@@ -133,12 +133,14 @@ EventHandler: TypeAlias = (
 # ContravariantEventHandler is needed to allow handlers to accept any BaseEvent subclass in some signatures
 ContravariantEventHandler: TypeAlias = (
     EventHandlerFunc[T_Event]  # cannot be BaseEvent or type checker will complain
-    | AsyncEventHandlerFunc['BaseEvent']
-    | EventHandlerMethod['BaseEvent']
+    | AsyncEventHandlerFunc['BaseEvent[Any]']
+    | EventHandlerMethod['BaseEvent[Any]']
     | AsyncEventHandlerMethod[T_Event]  # cannot be 'BaseEvent' or type checker will complain
-    | EventHandlerClassMethod['BaseEvent']
-    | AsyncEventHandlerClassMethod['BaseEvent']
+    | EventHandlerClassMethod['BaseEvent[Any]']
+    | AsyncEventHandlerClassMethod['BaseEvent[Any]']
 )
+
+EventResultFilter: TypeAlias = Callable[['EventResult[T_EventResultType]'], bool]
 
 
 def get_handler_name(handler: ContravariantEventHandler[T_Event]) -> str:
@@ -158,7 +160,7 @@ def get_handler_id(handler: EventHandler, eventbus: EventBus | None = None) -> s
     return f'{id(eventbus)}.{id(handler)}'
 
 
-class BaseEvent(BaseModel):
+class BaseEvent(BaseModel, Generic[T_EventResultType]):
     """
     The base model used for all Events that flow through the EventBus system.
     """
@@ -178,6 +180,9 @@ class BaseEvent(BaseModel):
         max_length=250,
     )  # long because it can include long function names / module paths
     event_timeout: float | None = Field(default=300.0, description='Timeout in seconds for event to finish processing')
+    event_result_type: type[T_EventResultType] | None = Field(
+        default=None, description='Type to cast/validate handler return values (e.g. int, str, bytes, BaseModel subclass)'
+    )
 
     # Runtime metadata
     event_id: UUIDStr = Field(default_factory=uuid7str, max_length=36)
@@ -196,7 +201,7 @@ class BaseEvent(BaseModel):
         description='Timestamp when event was first processed by any handler',
     )
 
-    event_results: dict[PythonIdStr, EventResult] = Field(
+    event_results: dict[PythonIdStr, 'EventResult[T_EventResultType]'] = Field(
         default_factory=dict, exclude=True
     )  # Results indexed by str(id(handler_func))
 
@@ -315,11 +320,11 @@ class BaseEvent(BaseModel):
         return 'completed' if self.event_completed_at else 'started' if self.event_started_at else 'pending'
 
     @property
-    def event_children(self) -> list[BaseEvent]:
+    def event_children(self) -> list['BaseEvent[Any]']:
         """Get all child events dispatched from within this event's handlers"""
-        children: list[BaseEvent] = []
+        children: list[BaseEvent[Any]] = []
         for event_result in self.event_results.values():
-            children.extend(event_result.event_children)
+            children.extend(cast(list['BaseEvent[Any]'], event_result.event_children))  # type: ignore
         return children
 
     @property
@@ -347,85 +352,177 @@ class BaseEvent(BaseModel):
         completed_times = [result.completed_at for result in self.event_results.values() if result.completed_at is not None]
         return max(completed_times) if completed_times else self.event_processed_at
 
-    async def event_result(self, timeout: float | None = None) -> Any:
-        """Get the first non-None result from the event handlers"""
-        results = await self.event_results_list(timeout=timeout)
-        results = list(filter(lambda r: r is not None, results))
-        return results[0] if results else None
+    @staticmethod
+    def _event_result_is_truthy(event_result: 'EventResult[T_EventResultType]') -> bool:
+        if event_result.status != 'completed':
+            return False
+        if event_result.result is None:
+            return False
+        if isinstance(event_result.result, BaseException) or event_result.error:
+            return False
+        if isinstance(
+            event_result.result, BaseEvent
+        ):  # omit if result is a BaseEvent, it's a forwarded event not an actual return value
+            return False
+        return True
 
-    async def event_results_by_handler_id(self, timeout: float | None = None) -> dict[PythonIdStr, Any]:
-        """Get all raw result values organized by handler id {handler1_id: handler1_result, handler2_id: handler2_result, ...}"""
+    async def event_results_filtered(
+        self,
+        timeout: float | None = None,
+        include: EventResultFilter[T_EventResultType] = _event_result_is_truthy,
+        raise_if_any: bool = True,
+        raise_if_none: bool = True,
+    ) -> 'dict[PythonIdStr, EventResult[T_EventResultType]]':
+        """Get all results filtered by the include function"""
+
+        # wait for all handlers to finish processing
         assert self.event_completed_signal is not None, 'EventResult cannot be awaited outside of an async context'
-
         await asyncio.wait_for(self.event_completed_signal.wait(), timeout=timeout or self.event_timeout)
-
-        return {handler_id: (await event_result) for handler_id, event_result in self.event_results.items()}
-
-    async def event_results_by_handler_name(self, timeout: float | None = None) -> dict[PythonIdentifierStr, Any]:
-        """Get all raw result values organized by handler name {handler1_name: handler1_result, handler2_name: handler2_result, ...}"""
-        assert self.event_completed_signal is not None, 'EventResult cannot be awaited outside of an async context'
-
-        await asyncio.wait_for(self.event_completed_signal.wait(), timeout=timeout or self.event_timeout)
-
-        return {event_result.handler_name: (await event_result) for event_result in self.event_results.values()}
-
-    async def event_results_list(self, timeout: float | None = None) -> list[Any]:
-        """Get all result values in a list [handler1_result, handler2_result, ...]"""
-        assert self.event_completed_signal is not None, 'EventResult cannot be awaited outside of an async context'
-
-        await asyncio.wait_for(self.event_completed_signal.wait(), timeout=timeout or self.event_timeout)
-
-        return [(await event_result) for event_result in self.event_results.values()]
-
-    async def event_results_flat_dict(self, timeout: float | None = None) -> dict[Any, Any]:
-        """Assuming all handlers return dicts, merge all the returned dicts into a single flat dict {**handler1_result, **handler2_result, ...}"""
-        assert self.event_completed_signal is not None, 'EventResult cannot be awaited outside of an async context'
-
-        await asyncio.wait_for(self.event_completed_signal.wait(), timeout=timeout or self.event_timeout)
-
-        merged_results: dict[Any, Any] = {}
         for event_result in self.event_results.values():
-            if event_result.status != 'completed' or not event_result.result:  # omit if result is pending, {}, or None
+            await event_result
+
+        event_results: dict[PythonIdStr, EventResult[T_EventResultType]] = {
+            handler_key: event_result for handler_key, event_result in self.event_results.items()
+        }
+        included_results: dict[PythonIdStr, EventResult[T_EventResultType]] = {
+            handler_key: event_result for handler_key, event_result in event_results.items() if include(event_result)
+        }
+        error_results: dict[PythonIdStr, EventResult[T_EventResultType]] = {
+            handler_key: event_result
+            for handler_key, event_result in event_results.items()
+            if event_result.error or isinstance(event_result.result, BaseException)
+        }
+
+        if raise_if_any and error_results:
+            failing_handler, failing_result = list(error_results.items())[0]  # throw first error
+            raise Exception(
+                f'Event handler {failing_handler}({self}) returned an error -> {failing_result.error or cast(Any, failing_result.result)}'
+            )
+
+        if raise_if_none and not included_results:
+            raise Exception(
+                f'Expected at least one handler to return a non-None result, but none did! {self} -> {self.event_results}'
+            )
+
+        event_results_by_handler_id: dict[PythonIdStr, EventResult[T_EventResultType]] = {
+            handler_key: result for handler_key, result in included_results.items()
+        }
+        for event_result in event_results_by_handler_id.values():
+            assert event_result.result is not None, f'EventResult {event_result} has no result'
+
+        return event_results_by_handler_id
+
+    async def event_results_by_handler_id(
+        self,
+        timeout: float | None = None,
+        include: EventResultFilter[T_EventResultType] = _event_result_is_truthy,
+        raise_if_any: bool = True,
+        raise_if_none: bool = True,
+    ) -> dict[PythonIdStr, T_EventResultType | None]:
+        """Get all raw result values organized by handler id {handler1_id: handler1_result, handler2_id: handler2_result, ...}"""
+        included_results = await self.event_results_filtered(
+            timeout=timeout, include=include, raise_if_any=raise_if_any, raise_if_none=raise_if_none
+        )
+        return {handler_id: event_result.result for handler_id, event_result in included_results.items()}
+
+    async def event_results_by_handler_name(
+        self,
+        timeout: float | None = None,
+        include: EventResultFilter[T_EventResultType] = _event_result_is_truthy,
+        raise_if_any: bool = True,
+        raise_if_none: bool = True,
+    ) -> dict[PythonIdentifierStr, T_EventResultType | None]:
+        """Get all raw result values organized by handler name {handler1_name: handler1_result, handler2_name: handler2_result, ...}"""
+        included_results = await self.event_results_filtered(
+            timeout=timeout, include=include, raise_if_any=raise_if_any, raise_if_none=raise_if_none
+        )
+        return {event_result.handler_name: event_result.result for event_result in included_results.values()}
+
+    async def event_result(
+        self,
+        timeout: float | None = None,
+        include: EventResultFilter[T_EventResultType] = _event_result_is_truthy,
+        raise_if_any: bool = True,
+        raise_if_none: bool = True,
+    ) -> T_EventResultType | None:
+        """Get the first non-None result from the event handlers"""
+        valid_results = await self.event_results_filtered(
+            timeout=timeout, include=include, raise_if_any=raise_if_any, raise_if_none=raise_if_none
+        )
+        results = list(valid_results.values())
+        return results[0].result if results else None
+
+    async def event_results_list(
+        self,
+        timeout: float | None = None,
+        include: EventResultFilter[T_EventResultType] = _event_result_is_truthy,
+        raise_if_any: bool = True,
+        raise_if_none: bool = True,
+    ) -> list[T_EventResultType | None]:
+        """Get all result values in a list [handler1_result, handler2_result, ...]"""
+        valid_results = await self.event_results_filtered(
+            timeout=timeout, include=include, raise_if_any=raise_if_any, raise_if_none=raise_if_none
+        )
+        return list(event_result.result for event_result in valid_results.values())
+
+    async def event_results_flat_dict(
+        self,
+        timeout: float | None = None,
+        include: EventResultFilter[T_EventResultType] = _event_result_is_truthy,
+        raise_if_any: bool = True,
+        raise_if_none: bool = False,
+        raise_if_conflicts: bool = True,
+    ) -> dict[str, Any]:
+        """Assuming all handlers return dicts, merge all the returned dicts into a single flat dict {**handler1_result, **handler2_result, ...}"""
+
+        valid_results = await self.event_results_filtered(
+            timeout=timeout,
+            include=lambda result: isinstance(result, dict) and include(result),
+            raise_if_any=raise_if_any,
+            raise_if_none=raise_if_none,
+        )
+
+        merged_results: dict[str, Any] = {}
+        for event_result in valid_results.values():
+            if not event_result.result:
                 continue
-            if isinstance(event_result.result, BaseEvent):
-                # this is returned by EventBus.dispatch() to allow for event forwarding,
-                # handlers on other buses will automatically insert their own results into the event_results dict
-                continue
-            if not isinstance(event_result.result, dict):  # omit if result is not a dict
-                logger.warning(
-                    f'⚠️ {self}.event_results_flat_dict() expects all handlers to return a dict, but handler {event_result.handler_name}() returned a {type(event_result.result).__name__}: {repr(event_result.result)[:12]}...'
-                )
-                continue
+
+            # check for event results trampling each other / conflicting
+            overlapping_keys: set[str] = merged_results.keys() & event_result.result.keys()  # type: ignore
+            if raise_if_conflicts and overlapping_keys:  # type: ignore
+                raise Exception(
+                    f'Event handler {event_result.handler_name} returned a dict with keys that would overwrite values from previous handlers: {overlapping_keys} (pass raise_if_conflicts=False to merge with last-handler-wins)'
+                )  # type: ignore
+
             merged_results.update(
                 event_result.result  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
             )  # update the merged dict with the contents of the result dict
         return merged_results
 
-    async def event_results_flat_list(self, timeout: float | None = None) -> list[Any]:
+    async def event_results_flat_list(
+        self,
+        timeout: float | None = None,
+        include: EventResultFilter[T_EventResultType] = _event_result_is_truthy,
+        raise_if_any: bool = True,
+        raise_if_none: bool = True,
+    ) -> list[Any]:
         """Assuming all handlers return lists, merge all the returned lists into a single flat list [*handler1_result, *handler2_result, ...]"""
-        assert self.event_completed_signal is not None, 'EventResult cannot be awaited outside of an async context'
-
-        await asyncio.wait_for(self.event_completed_signal.wait(), timeout=timeout or self.event_timeout)
-
-        merged_results: list[Any] = []
-        for event_result in self.event_results.values():
-            if event_result.status != 'completed' or not event_result.result:  # omit if result is pending, {}, or None
-                continue
-            if isinstance(event_result.result, BaseEvent):
-                # this is returned by EventBus.dispatch() to allow for event forwarding,
-                # handlers on other buses will automatically insert their own results into the event_results dict
-                continue
-            if not isinstance(event_result.result, list):  # omit if result is not a list
-                logger.warning(
-                    f'⚠️ {self}.event_results_flat_list() expects all handlers to return a list, but handler {event_result.handler_name}() returned a {type(event_result.result).__name__}: {repr(event_result.result)[:12]}...'
-                )
-                continue
+        valid_results = await self.event_results_filtered(
+            timeout=timeout,
+            include=lambda result: isinstance(result, list) and include(result),
+            raise_if_any=True,
+            raise_if_none=True,
+        )
+        merged_results: list[T_EventResultType | None] = []
+        for event_result in valid_results.values():
             merged_results.extend(
-                event_result.result  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
+                cast(list[T_EventResultType | None], event_result.result)
             )  # append the contents of the list to the merged list
         return merged_results
 
-    def event_result_update(self, handler: EventHandler, eventbus: EventBus | None = None, **kwargs: Any) -> EventResult:
+    def event_result_update(
+        self, handler: EventHandler, eventbus: EventBus | None = None, **kwargs: Any
+    ) -> 'EventResult[T_EventResultType]':
         """Create or update an EventResult for a handler"""
 
         from bubus.service import EventBus
@@ -443,14 +540,18 @@ class BaseEvent(BaseModel):
 
         # Get or create EventResult
         if handler_id not in self.event_results:
-            self.event_results[handler_id] = EventResult(
-                event_id=self.event_id,
-                handler_id=handler_id,
-                handler_name=handler_name,
-                eventbus_id=eventbus_id,
-                eventbus_name=eventbus_name,
-                status=kwargs.get('status', 'pending'),
-                timeout=self.event_timeout,
+            self.event_results[handler_id] = cast(
+                EventResult[T_EventResultType],
+                EventResult(
+                    event_id=self.event_id,
+                    handler_id=handler_id,
+                    handler_name=handler_name,
+                    eventbus_id=eventbus_id,
+                    eventbus_name=eventbus_name,
+                    status=kwargs.get('status', 'pending'),
+                    timeout=self.event_timeout,
+                    result_type=self.event_result_type,
+                ),
             )
             # logger.debug(f'Created EventResult for handler {handler_id}: {handler and get_handler_name(handler)}')
 
@@ -502,7 +603,10 @@ class BaseEvent(BaseModel):
         return {k: v for k, v in self.model_dump(mode='json').items() if k.startswith('event_') and 'results' not in k}
 
     def event_log_tree(
-        self, indent: str = '', is_last: bool = True, child_events_by_parent: dict[str | None, list[BaseEvent]] | None = None
+        self,
+        indent: str = '',
+        is_last: bool = True,
+        child_events_by_parent: 'dict[str | None, list[BaseEvent[Any]]] | None' = None,
     ) -> None:
         """Print this event and its results with proper tree formatting"""
         from bubus.logging import log_event_tree
@@ -532,7 +636,7 @@ class BaseEvent(BaseModel):
         raise RuntimeError(f'Could not find active EventBus named {current_bus_name}')
 
 
-def attr_name_allowed(key: str):
+def attr_name_allowed(key: str) -> bool:
     return key in pydantic_builtin_attrs or key in event_builtin_attrs or key.startswith('_')
 
 
@@ -549,7 +653,7 @@ assert not illegal_attrs, (
 )
 
 
-class EventResult(BaseModel):
+class EventResult(BaseModel, Generic[T_EventResultType]):
     """Individual result from a single handler"""
 
     model_config = ConfigDict(
@@ -561,9 +665,17 @@ class EventResult(BaseModel):
     )
 
     # Result fields, updated by the EventBus._execute_sync_or_async_handler() calling event_result.update(...)
-    result: Any = None
+    result: T_EventResultType | None = None
     error: BaseException | None = None
-    event_children: list[BaseEvent] = Field(default_factory=list)  # type: ignore[misc]  # any child events that got dispatched during handler execution
+
+    # any child events that were emitted during handler execution are captured automatically and stored here to track hierarchy
+    # note about why this is BaseEvent[Any] instead of a more specific type:
+    #   unfortunately we cant determine child event types statically / it's not worth it to force child event types to be defined at compile-time
+    #   so we just allow handlers to emit any BaseEvent subclass/instances with any result types
+    #   in theory it's possible to define the entire event tree hierarchy at compile-time with something like ParentEvent[ChildEvent[GrandchildEvent[FinalResultValueType]]],
+    #   it's not worth the complexity headache it would incur on users of the library though,
+    #   and it would significantly reduce runtime flexibility, e.g. you couldn't define and dispatch arbitrary server-provided event types at runtime
+    event_children: list['BaseEvent[Any]'] = Field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
 
     # Automatically set fields, updated by the EventBus._execute_sync_or_async_handler() calling event_result.update(...)
     id: UUIDStr = Field(default_factory=uuid7str)
@@ -572,6 +684,7 @@ class EventResult(BaseModel):
     event_id: UUIDStr
     handler_id: PythonIdStr
     handler_name: str
+    result_type: T_EventResultType | None = None
     eventbus_id: PythonIdStr
     eventbus_name: PythonIdentifierStr
     timeout: float | None = None
@@ -600,14 +713,14 @@ class EventResult(BaseModel):
         icon = '🏃' if self.status == 'pending' else '✅' if self.status == 'completed' else '❌'
         return f'{self.handler_name}#{self.handler_id[-4:]}() {icon}'
 
-    def __await__(self):
+    def __await__(self) -> Generator[Self, Any, T_EventResultType | None]:
         """
         Wait for this result to complete and return the result or raise error.
         Does not execute the handler itself, only waits for it to be marked completed by the EventBus.
         EventBus triggers handlers and calls event_result.update() to mark them as started or completed.
         """
 
-        async def wait_for_handler_to_complete_and_return_result():
+        async def wait_for_handler_to_complete_and_return_result() -> T_EventResultType | None:
             assert self.handler_completed_signal is not None, 'EventResult cannot be awaited outside of an async context'
 
             try:
@@ -623,18 +736,48 @@ class EventResult(BaseModel):
 
         return wait_for_handler_to_complete_and_return_result().__await__()
 
-    def update(self, **kwargs: Any) -> None:
+    def update(self, **kwargs: Any) -> Self:
         """Update the EventResult with provided kwargs, called by EventBus during handler execution."""
+
+        # fix common mistake of returning an exception object instead of marking the event result as an error result
+        if 'result' in kwargs and isinstance(kwargs['result'], BaseException):
+            logger.warning(
+                f'ℹ Event handler {self.handler_name} returned an exception object, auto-converting to EventResult(result=None, status="error", error={kwargs["result"]})'
+            )
+            kwargs['error'] = kwargs['result']
+            kwargs['status'] = 'error'
+            kwargs['result'] = None
+
         if 'result' in kwargs:
-            self.result = kwargs['result']
+            result: Any = kwargs['result']
             self.status = 'completed'
-        elif 'error' in kwargs:
+            if self.result_type is not None and result is not None:
+                # cast the return value to the expected type
+                try:
+                    if issubclass(self.result_type, BaseModel):
+                        # if expected result type is a pydantic model, validate it with pydantic
+                        self.result = cast(T_EventResultType, self.result_type.model_validate(dict(result)))
+                    else:
+                        # cast the return value to the expected type e.g. int(result) / str(result) / list(result) / etc.
+                        ResultType = TypeAdapter(self.result_type)
+                        self.result = cast(T_EventResultType, ResultType.validate_python(result))
+
+                except Exception as cast_error:
+                    self.error = ValueError(
+                        f'Event handler returned a value that did not match expected event_result_type: {self.result_type.__name__}({self.result}) -> {type(cast_error).__name__}: {cast_error} {self.error or ""}'
+                    )
+                    self.result = cast(T_EventResultType, None)
+                    self.status = 'error'
+                    return self
+
+        if 'error' in kwargs:
             assert isinstance(kwargs['error'], (BaseException, str)), (
                 f'Invalid error type: {type(kwargs["error"]).__name__} {kwargs["error"]}'
             )
-            self.error = kwargs['error'] if isinstance(kwargs['error'], BaseException) else Exception(kwargs['error'])
+            self.error = kwargs['error'] if isinstance(kwargs['error'], BaseException) else Exception(kwargs['error'])  # pyright: ignore[reportUnnecessaryIsInstance]
             self.status = 'error'
-        elif 'status' in kwargs:
+
+        if 'status' in kwargs:
             assert kwargs['status'] in ('pending', 'started', 'completed', 'error'), f'Invalid status: {kwargs["status"]}'
             self.status = kwargs['status']
 
@@ -645,9 +788,10 @@ class EventResult(BaseModel):
             self.completed_at = datetime.now(UTC)
             if self.handler_completed_signal:
                 self.handler_completed_signal.set()
+        return self
 
     def log_tree(
-        self, indent: str = '', is_last: bool = True, child_events_by_parent: dict[str | None, list[BaseEvent]] | None = None
+        self, indent: str = '', is_last: bool = True, child_events_by_parent: dict[str | None, list[BaseEvent[Any]]] | None = None
     ) -> None:
         """Print this result and its child events with proper tree formatting"""
         from bubus.logging import log_eventresult_tree

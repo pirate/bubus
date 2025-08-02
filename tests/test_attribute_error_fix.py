@@ -6,7 +6,9 @@ from datetime import UTC, datetime
 from bubus import BaseEvent, EventBus
 
 
-class SampleEvent(BaseEvent):
+class SampleEvent(BaseEvent[str]):
+    event_result_type = str
+
     data: str = 'test'
 
 

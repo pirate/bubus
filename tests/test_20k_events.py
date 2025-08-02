@@ -2,6 +2,7 @@ import asyncio
 import gc
 import os
 import time
+from typing import Any
 
 import psutil
 import pytest
@@ -34,7 +35,7 @@ async def test_20k_events_with_memory_control():
 
     processed_count = 0
 
-    async def handler(event: BaseEvent):
+    async def handler(event: BaseEvent[None]) -> None:
         nonlocal processed_count
         processed_count += 1
 
@@ -48,7 +49,7 @@ async def test_20k_events_with_memory_control():
 
     # Dispatch all events as fast as possible
     dispatched = 0
-    pending_events: list[BaseEvent] = []
+    pending_events: list[BaseEvent[Any]] = []
 
     while dispatched < total_events:
         try:
@@ -131,7 +132,7 @@ async def test_hard_limit_enforcement():
 
     try:
         # Create a slow handler to keep events pending
-        async def slow_handler(event: BaseEvent):
+        async def slow_handler(event: BaseEvent[None]) -> None:
             await asyncio.sleep(0.5)  # Reduced from 10s to 0.5s
 
         bus.on('TestEvent', slow_handler)
@@ -169,7 +170,7 @@ async def test_cleanup_prioritizes_pending():
 
     try:
         # Process some events to completion
-        completed_events: list[BaseEvent] = []
+        completed_events: list[BaseEvent[Any]] = []
         for _ in range(5):
             event = bus.dispatch(BaseEvent(event_type='QuickEvent'))
             completed_events.append(event)
@@ -177,13 +178,13 @@ async def test_cleanup_prioritizes_pending():
         await asyncio.gather(*completed_events)
 
         # Add pending events with slow handler (reduced sleep time)
-        async def slow_handler(event: BaseEvent) -> None:
+        async def slow_handler(event: BaseEvent[None]) -> None:
             if event.event_type == 'SlowEvent':
                 await asyncio.sleep(0.5)  # Reduced from 10s to 0.5s
 
         bus.on('*', slow_handler)
 
-        pending_events: list[BaseEvent] = []
+        pending_events: list[BaseEvent[Any]] = []
         for _ in range(10):
             event = bus.dispatch(BaseEvent(event_type='SlowEvent'))
             pending_events.append(event)

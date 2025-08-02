@@ -9,15 +9,21 @@ from bubus import BaseEvent, EventBus
 from bubus.models import EventResult
 
 
-class RootEvent(BaseEvent):
+class RootEvent(BaseEvent[str]):
+    event_result_type = str
+
     data: str = 'root'
 
 
-class ChildEvent(BaseEvent):
+class ChildEvent(BaseEvent[list[int]]):
+    event_result_type = list[int]
+
     value: int = 42
 
 
-class GrandchildEvent(BaseEvent):
+class GrandchildEvent(BaseEvent[str]):
+    event_result_type = str
+
     nested: dict[str, int] = {'level': 3}
 
 
@@ -67,7 +73,7 @@ def test_log_history_tree_with_handlers(capsys: Any) -> None:
         status='completed',
         started_at=datetime.now(UTC),
         completed_at=datetime.now(UTC),
-        result={'status': 'success'},
+        result='status: success',
     )
 
     bus.event_history[event.event_id] = event

@@ -16,15 +16,21 @@ async def cleanup_eventbus_instances():
     await asyncio.sleep(0.01)
 
 
-class MainEvent(BaseEvent):
+class MainEvent(BaseEvent[None]):
+    event_result_type = None
+
     message: str = 'test'
 
 
-class ChildEvent(BaseEvent):
+class ChildEvent(BaseEvent[None]):
+    event_result_type = None
+
     data: str = 'child'
 
 
-class GrandchildEvent(BaseEvent):
+class GrandchildEvent(BaseEvent[None]):
+    event_result_type = None
+
     info: str = 'grandchild'
 
 

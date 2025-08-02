@@ -1,24 +1,25 @@
 """Test comprehensive event patterns including forwarding, async/sync dispatch, and parent-child tracking."""
 
 import asyncio
+from typing import Any
 
 from bubus import BaseEvent, EventBus
 
 
-class ParentEvent(BaseEvent):
-    pass
+class ParentEvent(BaseEvent[str]):
+    event_result_type = str
 
 
-class ChildEvent(BaseEvent):
-    pass
+class ChildEvent(BaseEvent[str]):
+    event_result_type = str
 
 
-class ImmediateChildEvent(BaseEvent):
-    pass
+class ImmediateChildEvent(BaseEvent[str]):
+    event_result_type = str
 
 
-class QueuedChildEvent(BaseEvent):
-    pass
+class QueuedChildEvent(BaseEvent[str]):
+    event_result_type = str
 
 
 async def test_comprehensive_patterns():
@@ -31,7 +32,7 @@ async def test_comprehensive_patterns():
     results: list[tuple[int, str]] = []
     execution_counter = {'count': 0}  # Use a dict to track execution order
 
-    def child_bus2_event_handler(event: BaseEvent):
+    def child_bus2_event_handler(event: BaseEvent[str]) -> str:
         """This gets triggered when the event is forwarded to the second bus."""
         execution_counter['count'] += 1
         seq = execution_counter['count']
@@ -43,7 +44,7 @@ async def test_comprehensive_patterns():
     bus2.on('*', child_bus2_event_handler)  # register a handler on bus2
     bus1.on('*', bus2.dispatch)  # forward all events from bus1 -> bus2
 
-    async def parent_bus1_handler(event: ParentEvent):
+    async def parent_bus1_handler(event: ParentEvent) -> str:
         # Only process the parent ParentEvent
 
         execution_counter['count'] += 1
@@ -169,16 +170,16 @@ async def test_race_condition_stress():
 
     results: list[str] = []
 
-    async def child_handler(event: BaseEvent):
+    async def child_handler(event: BaseEvent[str]) -> str:
         bus_name = event.event_path[-1] if event.event_path else 'unknown'
         results.append(f'child_{bus_name}')
         # Add small delay to simulate work
         await asyncio.sleep(0.001)
         return f'child_done_{bus_name}'
 
-    async def parent_handler(event: BaseEvent):
+    async def parent_handler(event: BaseEvent[str]) -> str:
         # Dispatch multiple children in different ways
-        children: list[BaseEvent] = []
+        children: list[BaseEvent[Any]] = []
 
         # Async dispatches
         for _ in range(3):
@@ -194,7 +195,7 @@ async def test_race_condition_stress():
         assert all(c.event_parent_id == event.event_id for c in children)
         return 'parent_done'
 
-    def bad_handler(bad: BaseEvent):
+    def bad_handler(bad: BaseEvent[Any]) -> None:
         pass
 
     # Setup forwarding

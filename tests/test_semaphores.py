@@ -637,8 +637,10 @@ class TestRetryWithEventBus:
         handler_calls: list[tuple[str, float]] = []
         # results: list[Any] = []  # Unused variable
 
-        class TestEvent(BaseEvent):
+        class TestEvent(BaseEvent[str]):
             """Simple test event."""
+
+            event_result_type = str
 
             message: str
 
@@ -700,8 +702,10 @@ class TestRetryWithEventBus:
         max_concurrent = 0
         handler_results: dict[int, list[tuple[str, float]]] = {1: [], 2: [], 3: [], 4: []}
 
-        class WorkEvent(BaseEvent):
+        class WorkEvent(BaseEvent[str]):
             """Event that triggers work."""
+
+            event_result_type = str
 
             work_id: int
 
@@ -772,8 +776,10 @@ class TestRetryWithEventBus:
         """Test that retry timeout works correctly with EventBus handlers."""
         from bubus import BaseEvent, EventBus
 
-        class TimeoutEvent(BaseEvent):
+        class TimeoutEvent(BaseEvent[str]):
             """Event for timeout testing."""
+
+            event_result_type = str
 
             test_id: str
 
@@ -821,8 +827,10 @@ class TestRetryWithEventBus:
         """Test retry decorator with specific exception types."""
         from bubus import BaseEvent, EventBus
 
-        class RetryTestEvent(BaseEvent):
+        class RetryTestEvent(BaseEvent[str]):
             """Event for testing retry on specific exceptions."""
+
+            event_result_type = str
 
             attempt_limit: int
 

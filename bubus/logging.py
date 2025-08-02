@@ -32,10 +32,10 @@ def format_result_value(value: Any) -> str:
 
 
 def log_event_tree(
-    event: 'BaseEvent',
+    event: 'BaseEvent[Any]',
     indent: str = '',
     is_last: bool = True,
-    child_events_by_parent: dict[str | None, list['BaseEvent']] | None = None,
+    child_events_by_parent: dict[str | None, list['BaseEvent[Any]']] | None = None,
 ) -> None:
     """Print this event and its results with proper tree formatting"""
     # Determine the connector
@@ -65,7 +65,7 @@ def log_event_tree(
         results_sorted = sorted(event.event_results.items(), key=lambda x: x[1].started_at or datetime.min.replace(tzinfo=UTC))
 
         # Calculate which is the last item considering both results and unmapped children
-        unmapped_children: list[BaseEvent] = []
+        unmapped_children: list['BaseEvent[Any]'] = []
         if child_events_by_parent:
             all_children = child_events_by_parent.get(event.event_id, [])
             for child in all_children:
@@ -92,10 +92,10 @@ def log_event_tree(
 
 
 def log_eventresult_tree(
-    result: 'EventResult',
+    result: 'EventResult[Any]',
     indent: str = '',
     is_last: bool = True,
-    child_events_by_parent: dict[str | None, list['BaseEvent']] | None = None,
+    child_events_by_parent: dict[str | None, list['BaseEvent[Any]']] | None = None,
 ) -> None:
     """Print this result and its child events with proper tree formatting"""
     # Determine the connector
@@ -149,7 +149,7 @@ def log_eventbus_tree(eventbus: 'EventBus') -> None:
     """Print a nice pretty formatted tree view of all events in the history including their results and child events recursively"""
 
     # Build a mapping of parent_id to child events
-    parent_to_children: dict[str | None, list['BaseEvent']] = defaultdict(list)
+    parent_to_children: dict[str | None, list['BaseEvent[Any]']] = defaultdict(list)
     for event in eventbus.event_history.values():
         parent_to_children[event.event_parent_id].append(event)
 
