@@ -357,7 +357,7 @@ bus.dispatch(SecondEventAbc(some_key="banana"))
 ...
 ```
 
-### 🎯 Event Return Values
+### 🎯 Typed Event Handler Return Values
 
 There are two ways to get return values from event handlers:
 
@@ -386,7 +386,7 @@ print(result_event.final_sum)
 # 220
 ```
 
-#### Type-Safe Return Values with Generics
+#### Annotate Your Expected Return Values with Generics
 
 If you end up having handlers return their values directly, you can take advantage of `event_result_type` enforcement via generics:
 
@@ -415,26 +415,29 @@ assert isinstance(screenshot, bytes), 'bubus will enforce that event_result() wi
 You can also define more complex expected return values using Pydantic models:
 
 ```python
+### Expected Return Type
 class EmailMessage(BaseModel):
     subject: str
     content_len: int
     email_from: str
     ...
 
-### Events
-class FetchInboxEvent(BaseEvent[list[EmailMessage]]): # <-- set BaseEvent[ResultTypeHere] for static type hints in IDE
+EmailList: TypeAlias = list[EmailMessage]
+
+### Event
+class FetchInboxEvent(BaseEvent[EmailList]): # <-- set BaseEvent[ResultTypeHere] for static type hints in IDE
     account_id: UUID
     auth_key: str
 
-    event_result_type = list[EmailMessage] # <----- set event_result_type to enforce return value types at runtime
+    event_result_type = EmailList # <----- set event_result_type to enforce return value types at runtime
 
 ### Handlers
-async def fetch_from_gmail(event: FetchInboxEvent) -> list[EmailMessage]:
+async def fetch_from_gmail(event: FetchInboxEvent) -> EmailList:
     if not GoogleAPI.account_exists(event.account_id):
         raise Exception('credentials not applicable / not working for Gmail')
     return [EmailMessage(subject=msg.subj, ...) for msg in GmailAPI.get_msgs(event.account_id, ...)] # return types are enforced statically & at runtime
 
-async def fetch_from_yahoo(event: FetchInboxEvent) -> list[EmailMessage]:
+async def fetch_from_yahoo(event: FetchInboxEvent) -> EmailList:
     if not YahooAPI.account_exists(event.account_id):
         raise Exception('credentials not applicable / not working for Yahoo')
     return [EmailMessage(subject=msg.subj, ...) for msg in YahooAPI.get_msgs(event.account_id, ...)]
