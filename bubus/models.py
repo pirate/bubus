@@ -656,25 +656,36 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             # Check if all handler results are done
             all_handlers_done = all(result.status in ('completed', 'error') for result in self.event_results.values())
             if not all_handlers_done:
+                logger.debug(f'Event {self} not complete - waiting for handlers: {[r for r in self.event_results.values() if r.status not in ("completed", "error")]}')
                 return
 
             # Recursively check if all child events are also complete
             if not self.event_are_all_children_complete():
+                logger.debug(f'Event {self} not complete - waiting for child events')
                 return
 
             # All handlers and all child events are done
             if hasattr(self, 'event_processed_at'):
                 self.event_processed_at = datetime.now(UTC)
+            logger.debug(f'Event {self} marking complete - all handlers and children done')
             self.event_completed_signal.set()
 
-    def event_are_all_children_complete(self) -> bool:
+    def event_are_all_children_complete(self, _visited: set[str] | None = None) -> bool:
         """Recursively check if all child events and their descendants are complete"""
+        if _visited is None:
+            _visited = set()
+        
+        # Prevent infinite recursion on circular references
+        if self.event_id in _visited:
+            return True
+        _visited.add(self.event_id)
+        
         for child_event in self.event_children:
             if child_event.event_status != 'completed':
                 logger.debug(f'Event {self} has incomplete child {child_event}')
                 return False
             # Recursively check child's children
-            if not child_event.event_are_all_children_complete():
+            if not child_event.event_are_all_children_complete(_visited):
                 return False
         return True
 
@@ -744,9 +755,25 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
         revalidate_instances='always',
     )
 
+    # Automatically set fields, setup at Event init and updated by the EventBus._execute_sync_or_async_handler() calling event_result.update(...)
+    id: UUIDStr = Field(default_factory=uuid7str)
+    status: Literal['pending', 'started', 'completed', 'error'] = 'pending'
+    event_id: UUIDStr
+    handler_id: PythonIdStr
+    handler_name: str
+    result_type: Any | type[T_EventResultType] | None = None
+    eventbus_id: PythonIdStr
+    eventbus_name: PythonIdentifierStr
+    timeout: float | None = None
+    started_at: datetime | None = None
+
     # Result fields, updated by the EventBus._execute_sync_or_async_handler() calling event_result.update(...)
     result: T_EventResultType | BaseEvent[Any] | None = None
     error: BaseException | None = None
+    completed_at: datetime | None = None
+
+    # Completion signal
+    _handler_completed_signal: asyncio.Event | None = PrivateAttr(default=None)
 
     # any child events that were emitted during handler execution are captured automatically and stored here to track hierarchy
     # note about why this is BaseEvent[Any] instead of a more specific type:
@@ -756,24 +783,6 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
     #   it's not worth the complexity headache it would incur on users of the library though,
     #   and it would significantly reduce runtime flexibility, e.g. you couldn't define and dispatch arbitrary server-provided event types at runtime
     event_children: list['BaseEvent[Any]'] = Field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
-
-    # Automatically set fields, updated by the EventBus._execute_sync_or_async_handler() calling event_result.update(...)
-    id: UUIDStr = Field(default_factory=uuid7str)
-
-    status: Literal['pending', 'started', 'completed', 'error'] = 'pending'
-    event_id: UUIDStr
-    handler_id: PythonIdStr
-    handler_name: str
-    result_type: Any = None
-    eventbus_id: PythonIdStr
-    eventbus_name: PythonIdentifierStr
-    timeout: float | None = None
-    started_at: datetime | None = None
-    completed_at: datetime | None = None
-
-    # Completion signal
-    _handler_completed_signal: asyncio.Event | None = PrivateAttr(default=None)
-
 
     @property
     def handler_completed_signal(self) -> asyncio.Event | None:
