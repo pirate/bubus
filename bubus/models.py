@@ -140,7 +140,7 @@ ContravariantEventHandler: TypeAlias = (
     | AsyncEventHandlerClassMethod['BaseEvent[Any]']
 )
 
-EventResultFilter: TypeAlias = Callable[['EventResult[T_EventResultType]'], bool]
+EventResultFilter = Callable[['EventResult[Any]'], bool]
 
 
 def get_handler_name(handler: ContravariantEventHandler[T_Event]) -> str:
@@ -153,7 +153,7 @@ def get_handler_name(handler: ContravariantEventHandler[T_Event]) -> str:
         raise ValueError(f'Invalid handler: {handler} {type(handler)}, expected a function, coroutine, or method')
 
 
-def get_handler_id(handler: EventHandler, eventbus: EventBus | None = None) -> str:
+def get_handler_id(handler: EventHandler, eventbus: Any = None) -> str:
     """Generate a unique handler ID based on the bus and handler instance."""
     if eventbus is None:
         return str(id(handler))
@@ -369,7 +369,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     async def event_results_filtered(
         self,
         timeout: float | None = None,
-        include: EventResultFilter[T_EventResultType] = _event_result_is_truthy,
+        include: EventResultFilter = _event_result_is_truthy,
         raise_if_any: bool = True,
         raise_if_none: bool = True,
     ) -> 'dict[PythonIdStr, EventResult[T_EventResultType]]':
@@ -415,7 +415,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     async def event_results_by_handler_id(
         self,
         timeout: float | None = None,
-        include: EventResultFilter[T_EventResultType] = _event_result_is_truthy,
+        include: EventResultFilter = _event_result_is_truthy,
         raise_if_any: bool = True,
         raise_if_none: bool = True,
     ) -> dict[PythonIdStr, T_EventResultType | None]:
@@ -428,7 +428,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     async def event_results_by_handler_name(
         self,
         timeout: float | None = None,
-        include: EventResultFilter[T_EventResultType] = _event_result_is_truthy,
+        include: EventResultFilter = _event_result_is_truthy,
         raise_if_any: bool = True,
         raise_if_none: bool = True,
     ) -> dict[PythonIdentifierStr, T_EventResultType | None]:
@@ -441,7 +441,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     async def event_result(
         self,
         timeout: float | None = None,
-        include: EventResultFilter[T_EventResultType] = _event_result_is_truthy,
+        include: EventResultFilter = _event_result_is_truthy,
         raise_if_any: bool = True,
         raise_if_none: bool = True,
     ) -> T_EventResultType | None:
@@ -455,7 +455,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     async def event_results_list(
         self,
         timeout: float | None = None,
-        include: EventResultFilter[T_EventResultType] = _event_result_is_truthy,
+        include: EventResultFilter = _event_result_is_truthy,
         raise_if_any: bool = True,
         raise_if_none: bool = True,
     ) -> list[T_EventResultType | None]:
@@ -468,7 +468,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     async def event_results_flat_dict(
         self,
         timeout: float | None = None,
-        include: EventResultFilter[T_EventResultType] = _event_result_is_truthy,
+        include: EventResultFilter = _event_result_is_truthy,
         raise_if_any: bool = True,
         raise_if_none: bool = False,
         raise_if_conflicts: bool = True,
@@ -502,7 +502,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     async def event_results_flat_list(
         self,
         timeout: float | None = None,
-        include: EventResultFilter[T_EventResultType] = _event_result_is_truthy,
+        include: EventResultFilter = _event_result_is_truthy,
         raise_if_any: bool = True,
         raise_if_none: bool = True,
     ) -> list[Any]:
@@ -521,7 +521,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         return merged_results
 
     def event_result_update(
-        self, handler: EventHandler, eventbus: EventBus | None = None, **kwargs: Any
+        self, handler: EventHandler, eventbus: 'EventBus | None' = None, **kwargs: Any
     ) -> 'EventResult[T_EventResultType]':
         """Create or update an EventResult for a handler"""
 
@@ -614,7 +614,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         log_event_tree(self, indent, is_last, child_events_by_parent)
 
     @property
-    def event_bus(self) -> EventBus:
+    def event_bus(self) -> 'EventBus':
         """Get the EventBus that is currently processing this event"""
         from bubus.service import EventBus, inside_handler_context
 
