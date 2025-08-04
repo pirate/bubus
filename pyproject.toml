@@ -81,6 +81,33 @@ filterwarnings = [
 ]
 log_level = "DEBUG"
 
+[tool.coverage.run]
+source = ["bubus"]
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+    "*.pyc",
+]
+parallel = true
+data_file = ".coverage"
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+    "return NotImplemented",
+    "assert_never",
+    "\\.\\.\\.",
+]
+show_missing = true
+skip_covered = false
+precision = 2
+
+[tool.coverage.html]
+directory = "htmlcov"
+
 
 [tool.uv]
 dev-dependencies = [
@@ -96,4 +123,5 @@ dev-dependencies = [
     "ty>=0.0.1a1",
     "pytest-xdist>=3.7.0",
     "psutil>=7.0.0",
+    "pytest-cov>=6.2.1",
 ]

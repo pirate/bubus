@@ -1319,7 +1319,7 @@ class TestEventResults:
         eventbus.on('GetConfig', config_override)
 
         event = await eventbus.dispatch(BaseEvent(event_type='GetConfig'))
-        merged = await event.event_results_flat_dict()
+        merged = await event.event_results_flat_dict(raise_if_conflicts=False)
 
         # Later handlers override earlier ones
         assert merged == {
@@ -1369,7 +1369,7 @@ class TestEventResults:
         eventbus.on('GetSingle', single_value)
         event_single = await eventbus.dispatch(BaseEvent(event_type='GetSingle'))
 
-        result = await event_single.event_results_flat_list()
+        result = await event_single.event_results_flat_list(raise_if_none=False)
         assert 'single' not in result  # Single values should be skipped, as they are not lists
         assert len(result) == 0
 
@@ -1596,20 +1596,141 @@ class TestComplexIntegration:
             assert 'DataBus' in event.event_path
 
             # Test flat dict merging
-            with caplog.at_level(logging.WARNING):
-                dict_result = await event.event_results_flat_dict()
+            dict_result = await event.event_results_flat_dict()
             # Should have merged all dict returns
             assert 'app_valid' in dict_result and 'auth_valid' in dict_result and 'data_valid' in dict_result
-            assert 'expects all handlers to return a dict' in caplog.text
 
             # Test flat list
-            with caplog.at_level(logging.WARNING):
-                list_result = await event.event_results_flat_list()
-            # Should include all list items and non-list values
+            list_result = await event.event_results_flat_list()
+            # Should include all list items
             assert any('log' in str(item) for item in list_result)
-            assert 'expects all handlers to return a list' in caplog.text
 
         finally:
             await app_bus.stop(timeout=0, clear=True)
             await auth_bus.stop(timeout=0, clear=True)
             await data_bus.stop(timeout=0, clear=True)
+
+    async def test_event_result_type_enforcement_with_dict(self):
+        """Test that handlers returning wrong types get errors when event expects dict result"""
+        bus = EventBus(name='TestBus')
+
+        # Create an event that expects dict results
+        class DictResultEvent(BaseEvent[dict]):
+            pass
+
+        # Create handlers with different return types
+        async def dict_handler1(event):
+            return {'key1': 'value1'}
+
+        async def dict_handler2(event):
+            return {'key2': 'value2'}
+
+        async def string_handler(event):
+            return 'this is a string, not a dict'
+
+        async def int_handler(event):
+            return 42
+
+        async def list_handler(event):
+            return [1, 2, 3]
+
+        # Register all handlers
+        bus.on('DictResultEvent', dict_handler1)
+        bus.on('DictResultEvent', dict_handler2)
+        bus.on('DictResultEvent', string_handler)
+        bus.on('DictResultEvent', int_handler)
+        bus.on('DictResultEvent', list_handler)
+
+        try:
+            # Dispatch event
+            event = bus.dispatch(DictResultEvent())
+            await bus.wait_until_idle()
+            event = await event
+
+            # Check that handlers returning dicts succeeded
+            dict_results = [r for r in event.event_results.values() 
+                          if r.handler_name in ['dict_handler1', 'dict_handler2']]
+            assert all(r.status == 'completed' for r in dict_results)
+            assert all(isinstance(r.result, dict) for r in dict_results)
+
+            # Check that handlers returning wrong types have errors
+            wrong_type_results = [r for r in event.event_results.values() 
+                                if r.handler_name in ['string_handler', 'int_handler', 'list_handler']]
+            assert all(r.status == 'error' for r in wrong_type_results)
+            assert all(r.error is not None for r in wrong_type_results)
+            
+            # Check error messages mention type mismatch
+            for result in wrong_type_results:
+                error_msg = str(result.error)
+                assert 'did not match expected event_result_type' in error_msg
+                assert 'dict' in error_msg
+
+            # event_results_flat_dict should still work when raise_if_any=False, only including valid dict results
+            dict_result = await event.event_results_flat_dict(raise_if_any=False)
+            assert 'key1' in dict_result and 'key2' in dict_result
+            assert len(dict_result) == 2  # Only the two dict results
+
+        finally:
+            await bus.stop(timeout=0, clear=True)
+
+    async def test_event_result_type_enforcement_with_list(self):
+        """Test that handlers returning wrong types get errors when event expects list result"""
+        bus = EventBus(name='TestBus')
+
+        # Create an event that expects list results
+        class ListResultEvent(BaseEvent[list]):
+            pass
+
+        # Create handlers with different return types
+        async def list_handler1(event):
+            return [1, 2, 3]
+
+        async def list_handler2(event):
+            return ['a', 'b', 'c']
+
+        async def dict_handler(event):
+            return {'key': 'value'}
+
+        async def string_handler(event):
+            return 'not a list'
+
+        async def int_handler(event):
+            return 99
+
+        # Register all handlers
+        bus.on('ListResultEvent', list_handler1)
+        bus.on('ListResultEvent', list_handler2)
+        bus.on('ListResultEvent', dict_handler)
+        bus.on('ListResultEvent', string_handler)
+        bus.on('ListResultEvent', int_handler)
+
+        try:
+            # Dispatch event
+            event = bus.dispatch(ListResultEvent())
+            await bus.wait_until_idle()
+            event = await event
+
+            # Check that handlers returning lists succeeded
+            list_results = [r for r in event.event_results.values() 
+                          if r.handler_name in ['list_handler1', 'list_handler2']]
+            assert all(r.status == 'completed' for r in list_results)
+            assert all(isinstance(r.result, list) for r in list_results)
+
+            # Check that handlers returning wrong types have errors
+            wrong_type_results = [r for r in event.event_results.values() 
+                                if r.handler_name in ['dict_handler', 'string_handler', 'int_handler']]
+            assert all(r.status == 'error' for r in wrong_type_results)
+            assert all(r.error is not None for r in wrong_type_results)
+            
+            # Check error messages mention type mismatch
+            for result in wrong_type_results:
+                error_msg = str(result.error)
+                assert 'did not match expected event_result_type' in error_msg
+                assert 'list' in error_msg
+
+            # event_results_flat_list should still work when raise_if_any=False, only including valid list results
+            list_result = await event.event_results_flat_list(raise_if_any=False)
+            assert list_result == [1, 2, 3, 'a', 'b', 'c']  # Flattened from both list handlers
+
+        finally:
+            await bus.stop(timeout=0, clear=True)

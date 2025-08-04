@@ -139,6 +139,8 @@ _current_event_context: ContextVar['BaseEvent[Any] | None'] = ContextVar('curren
 inside_handler_context: ContextVar[bool] = ContextVar('inside_handler', default=False)
 # Context variable to track if we hold the global lock (for re-entrancy across tasks)
 holds_global_lock: ContextVar[bool] = ContextVar('holds_global_lock', default=False)
+# Context variable to track the current handler ID (for tracking child events)
+_current_handler_id_context: ContextVar[str | None] = ContextVar('current_handler_id', default=None)
 
 
 class ReentrantLock:
@@ -497,6 +499,16 @@ class EventBus:
             current_event: 'BaseEvent[Any] | None' = _current_event_context.get()
             if current_event is not None:
                 event.event_parent_id = current_event.event_id
+        
+        # Track child events - if we're inside a handler, add this event to the handler's event_children list
+        # Only track if this is a NEW event (not forwarding an existing event)
+        current_handler_id = _current_handler_id_context.get()
+        if current_handler_id is not None and inside_handler_context.get():
+            current_event = _current_event_context.get()
+            if current_event is not None and current_handler_id in current_event.event_results:
+                # Only add as child if it's a different event (not forwarding the same event)
+                if event.event_id != current_event.event_id:
+                    current_event.event_results[current_handler_id].event_children.append(event)
 
         # Add this EventBus to the event_path if not already there
         if self.name not in event.event_path:
@@ -912,6 +924,31 @@ class EventBus:
 
         # Mark event as complete if all handlers are done
         event.event_mark_complete_if_all_handlers_completed()
+        
+        # After processing this event, check if any parent events can now be marked complete
+        # We do this by walking up the parent chain
+        current = event
+        checked_ids: set[str] = set()
+        
+        while current.event_parent_id and current.event_parent_id not in checked_ids:
+            checked_ids.add(current.event_parent_id)
+            
+            # Find parent event in any bus's history
+            parent_event = None
+            for bus in EventBus.all_instances:
+                if bus and current.event_parent_id in bus.event_history:
+                    parent_event = bus.event_history[current.event_parent_id]
+                    break
+            
+            if not parent_event:
+                break
+                
+            # Check if parent can be marked complete
+            if parent_event.event_completed_signal and not parent_event.event_completed_signal.is_set():
+                parent_event.event_mark_complete_if_all_handlers_completed()
+            
+            # Move up the chain
+            current = parent_event
 
         # Clean up excess events to prevent memory leaks
         if self.max_history_size:
@@ -1008,6 +1045,8 @@ class EventBus:
         token = _current_event_context.set(event)
         # Mark that we're inside a handler
         handler_token = inside_handler_context.set(True)
+        # Set the current handler ID so child events can be tracked
+        handler_id_token = _current_handler_id_context.set(handler_id)
 
         # Create a task to monitor for potential deadlock / slow handlers
         async def deadlock_monitor():
@@ -1076,6 +1115,7 @@ class EventBus:
             # Reset context
             _current_event_context.reset(token)
             inside_handler_context.reset(handler_token)
+            _current_handler_id_context.reset(handler_id_token)
             # Ensure monitor task is cancelled
             try:
                 if not monitor_task.done():

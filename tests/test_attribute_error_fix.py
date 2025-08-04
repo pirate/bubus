@@ -3,11 +3,12 @@
 import asyncio
 from datetime import UTC, datetime
 
+from typing import Any
 from bubus import BaseEvent, EventBus
 
 
 class SampleEvent(BaseEvent[str]):
-    event_result_type = str
+    event_result_type: Any = str
 
     data: str = 'test'
 

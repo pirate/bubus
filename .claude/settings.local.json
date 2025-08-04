@@ -20,7 +20,23 @@
       "Bash(done)",
       "Bash(do echo \"Run $i:\")",
       "Bash(python -m pytest tests/test_event_bus_property.py -v)",
-      "Bash(.venv/bin/pytest tests/ -v)"
+      "Bash(.venv/bin/pytest tests/ -v)",
+      "Bash(.venv/bin/pytest tests/ -v --timeout=60)",
+      "Bash(.venv/bin/python:*)",
+      "Bash(.venv/bin/pyright:*)",
+      "Bash(.venv/bin/pytest tests/ -x --timeout=30)",
+      "Bash(.venv/bin/pytest tests/test_auto_event_result_type.py::test_module_level_types_auto_extraction -v)",
+      "Bash(.venv/bin/pytest tests/test_auto_event_result_type.py::test_module_level_runtime_enforcement -v -s)",
+      "Bash(.venv/bin/pytest tests/ -v --timeout=30)",
+      "Bash(.venv/bin/pytest tests/test_auto_event_result_type.py::test_builtin_types_auto_extraction -v -s)",
+      "Bash(.venv/bin/pytest tests/test_auto_event_result_type.py -v)",
+      "Bash(.venv/bin/pytest tests/test_20k_events.py::test_20k_events_with_memory_control -v -s)",
+      "Bash(.venv/bin/pytest tests/test_comprehensive_patterns.py::test_comprehensive_patterns -v -s)",
+      "Bash(.venv/bin/python:*)",
+      "Bash(.venv/bin/pytest tests/test_comprehensive_patterns.py::test_comprehensive_patterns -v -s --tb=short)",
+      "Bash(.venv/bin/pytest tests/test_comprehensive_patterns.py::test_comprehensive_patterns -v -s --tb=short)",
+      "Bash(.venv/bin/pytest tests/ -x)",
+      "Bash(.venv/bin/pytest tests/ -v --tb=short)"
     ],
     "deny": []
   }

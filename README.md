@@ -386,16 +386,12 @@ print(result_event.final_sum)
 # 220
 ```
 
-#### Annotate Your Expected Return Values with Generics
+#### Typed Return Values with Auto-Detection
 
-If you end up having handlers return their values directly, you can take advantage of `event_result_type` enforcement via generics:
+Bubus automatically detects the expected return type from your event's generic parameter:
 
 ```python
-# To make an event that expects all handlers to return bytes, you would define it like so:
-
 class ScreenshotEvent(BaseEvent[bytes]):
-    event_result_type = bytes
-
     url: str
     width: int = 1440
     height: int = 1990
@@ -408,48 +404,30 @@ async def on_ScreenshotEvent(event: ScreenshotEvent) -> bytes:
 
 event_bus.on(ScreenshotEvent, on_ScreenshotEvent)
 
+# Handler return values are automatically validated against the bytes type
 screenshot = await event_bus.dispatch(ScreenshotEvent(url='https://example.com')).event_result()
-assert isinstance(screenshot, bytes), 'bubus will enforce that event_result() will only return bytes, or raise an exception if no handler has returned bytes'
+assert isinstance(screenshot, bytes)
 ```
 
-You can also define more complex expected return values using Pydantic models:
+This also works with complex types and Pydantic models:
 
 ```python
-### Expected Return Type
 class EmailMessage(BaseModel):
     subject: str
     content_len: int
     email_from: str
-    ...
 
-EmailList: TypeAlias = list[EmailMessage]
-
-### Event
-class FetchInboxEvent(BaseEvent[EmailList]): # <-- set BaseEvent[ResultTypeHere] for static type hints in IDE
+class FetchInboxEvent(BaseEvent[list[EmailMessage]]): # Auto-detects list[EmailMessage]
     account_id: UUID
     auth_key: str
 
-    event_result_type = EmailList # <----- set event_result_type to enforce return value types at runtime
-
-### Handlers
-async def fetch_from_gmail(event: FetchInboxEvent) -> EmailList:
-    if not GoogleAPI.account_exists(event.account_id):
-        raise Exception('credentials not applicable / not working for Gmail')
-    return [EmailMessage(subject=msg.subj, ...) for msg in GmailAPI.get_msgs(event.account_id, ...)] # return types are enforced statically & at runtime
-
-async def fetch_from_yahoo(event: FetchInboxEvent) -> EmailList:
-    if not YahooAPI.account_exists(event.account_id):
-        raise Exception('credentials not applicable / not working for Yahoo')
-    return [EmailMessage(subject=msg.subj, ...) for msg in YahooAPI.get_msgs(event.account_id, ...)]
+async def fetch_from_gmail(event: FetchInboxEvent) -> list[EmailMessage]:
+    return [EmailMessage(subject=msg.subj, ...) for msg in GmailAPI.get_msgs(event.account_id, ...)]
 
 event_bus.on(FetchInboxEvent, fetch_from_gmail)
-event_bus.on(FetchInboxEvent, fetch_from_yahoo)
 
-### Example Usage
-fetch_event = FetchInboxEvent(account_id='124', ...)
-all_emails = await event_bus.dispatch(fetch_event).event_results_flat_list(raise_if_any=False)  # ignores any exceptions and flatten list results into one list
-print(all_emails)
-# [EmailMessage(...), EmailMessage(...), EmailMessage(...), ...]
+# Return values are automatically validated as list[EmailMessage]
+emails = await event_bus.dispatch(FetchInboxEvent(account_id='124', ...)).event_result()
 ```
 
 <br/>
@@ -573,7 +551,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     event_path: list[str]        # List of bus names traversed (auto-set)
     event_created_at: datetime   # When event was created, auto-generated
     event_results: dict[str, EventResult]   # Handler results
-    event_result_type: T_EventResultType = None
+    event_result_type: T_EventResultType    # Auto-detected from Generic parameter
     
     # Data fields
     # ... subclass BaseEvent to add your own event data fields here ...

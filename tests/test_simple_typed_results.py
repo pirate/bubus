@@ -1,6 +1,7 @@
 """Simple test for typed event results."""
 
 import asyncio
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -13,7 +14,7 @@ class MyResult(BaseModel):
 
 
 class TypedEvent(BaseEvent[MyResult]):
-    event_result_type = MyResult
+    event_result_type: Any = MyResult
 
 
 async def test_simple_typed_result():

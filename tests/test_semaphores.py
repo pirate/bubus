@@ -640,7 +640,7 @@ class TestRetryWithEventBus:
         class TestEvent(BaseEvent[str]):
             """Simple test event."""
 
-            event_result_type = str
+            event_result_type: Any = str
 
             message: str
 
@@ -705,7 +705,7 @@ class TestRetryWithEventBus:
         class WorkEvent(BaseEvent[str]):
             """Event that triggers work."""
 
-            event_result_type = str
+            event_result_type: Any = str
 
             work_id: int
 
@@ -779,7 +779,7 @@ class TestRetryWithEventBus:
         class TimeoutEvent(BaseEvent[str]):
             """Event for timeout testing."""
 
-            event_result_type = str
+            event_result_type: Any = str
 
             test_id: str
 
@@ -830,7 +830,7 @@ class TestRetryWithEventBus:
         class RetryTestEvent(BaseEvent[str]):
             """Event for testing retry on specific exceptions."""
 
-            event_result_type = str
+            event_result_type: Any = str
 
             attempt_limit: int
 

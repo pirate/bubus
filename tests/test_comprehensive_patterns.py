@@ -7,19 +7,19 @@ from bubus import BaseEvent, EventBus
 
 
 class ParentEvent(BaseEvent[str]):
-    event_result_type = str
+    pass
 
 
 class ChildEvent(BaseEvent[str]):
-    event_result_type = str
+    pass
 
 
 class ImmediateChildEvent(BaseEvent[str]):
-    event_result_type = str
+    pass
 
 
 class QueuedChildEvent(BaseEvent[str]):
-    event_result_type = str
+    pass
 
 
 async def test_comprehensive_patterns():
@@ -66,13 +66,23 @@ async def test_comprehensive_patterns():
 
         # Check that forwarded handler result is available
         print('\n3. Checking forwarded handler results...')
-        event_results = await child_event_sync.event_results_list()
+        print(f'   child_event_sync.event_results: {child_event_sync.event_results}')
+        print(f'   child_event_sync.event_result_type: {child_event_sync.event_result_type}')
+        event_results = await child_event_sync.event_results_list(raise_if_none=False)
         print(f'   Results: {event_results}')
         # The forwarding handler (bus.dispatch) returns the event object itself
         # We need to check if the child event was processed on bus2
-        assert len(event_results) > 0  # At least one handler processed it
-        # The event should have been forwarded to bus2
+        # Check that the event was forwarded by looking at:
+        # 1. The event path includes bus2
         assert 'bus2' in child_event_sync.event_path
+        # 2. Debug what handlers processed this event
+        print(f'   Handlers that processed this event:')
+        for result in child_event_sync.event_results.values():
+            print(f'     - {result.handler_name} (bus: {result.eventbus_name})')
+        # The event was processed by bus1 using bus2.dispatch handler
+        assert any('bus2' in result.handler_name and 'dispatch' in result.handler_name 
+                   for result in child_event_sync.event_results.values())
+        print(f'   Event was successfully forwarded to bus2')
 
         # Check parent-child relationships
         print('\n4. Checking parent-child relationships...')

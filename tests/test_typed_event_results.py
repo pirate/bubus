@@ -1,6 +1,7 @@
 """Test typed event results with automatic casting."""
 
 import asyncio
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -15,15 +16,15 @@ class ScreenshotEventResult(BaseModel):
 class ScreenshotEvent(BaseEvent[ScreenshotEventResult]):
     screenshot_width: int = 1080
     screenshot_height: int = 900
-    event_result_type = ScreenshotEventResult
+    event_result_type: Any = ScreenshotEventResult
 
 
 class StringEvent(BaseEvent[str]):
-    event_result_type = str
+    event_result_type: Any = str
 
 
 class IntEvent(BaseEvent[int]):
-    event_result_type = int
+    event_result_type: Any = int
 
 
 async def test_pydantic_model_result_casting():

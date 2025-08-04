@@ -7,7 +7,16 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Protocol, Self, TypeAlias, cast, runtime_checkable
 from uuid import UUID
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, PrivateAttr, TypeAdapter, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    TypeAdapter,
+    field_serializer,
+    model_validator,
+)
 from typing_extensions import TypeVar  # needed to get TypeVar(default=...) above python 3.11
 from uuid_extensions import uuid7str
 
@@ -160,6 +169,23 @@ def get_handler_id(handler: EventHandler, eventbus: Any = None) -> str:
     return f'{id(eventbus)}.{id(handler)}'
 
 
+def _extract_baseevent_result_type(cls: type) -> Any:
+    """Extract T_EventResultType Generic arg from BaseEvent[T_EventResultType] subclasses using pydantic generic metadata."""
+    
+    # Look through MRO for a parameterized BaseEvent parent
+    for parent in cls.__mro__:
+        if hasattr(parent, '__pydantic_generic_metadata__'):
+            metadata = getattr(parent, '__pydantic_generic_metadata__', {})
+            # Check if this is a parameterized BaseEvent
+            origin = metadata.get('origin')
+            args = metadata.get('args')
+            if origin is BaseEvent and args and len(args) > 0:
+                result = args[0]
+                return result
+    
+    return None
+
+
 class BaseEvent(BaseModel, Generic[T_EventResultType]):
     """
     The base model used for all Events that flow through the EventBus system.
@@ -180,9 +206,18 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         max_length=250,
     )  # long because it can include long function names / module paths
     event_timeout: float | None = Field(default=300.0, description='Timeout in seconds for event to finish processing')
-    event_result_type: type[T_EventResultType] | None = Field(
-        default=None, description='Type to cast/validate handler return values (e.g. int, str, bytes, BaseModel subclass)'
+    event_result_type: Any = Field(
+        default=None, 
+        description='Type to cast/validate handler return values (e.g. int, str, bytes, BaseModel subclass)'
     )
+    
+    @field_serializer('event_result_type')
+    def event_result_type_serializer(self, value: Any) -> str | None:
+        """Serialize event_result_type to a string representation"""
+        if value is None:
+            return None
+        # Use str() to get full representation: 'int', 'str', 'list[int]', etc.
+        return str(value)
 
     # Runtime metadata
     event_id: UUIDStr = Field(default_factory=uuid7str, max_length=36)
@@ -304,6 +339,45 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             data['event_schema'] = f'{cls.__module__}.{cls.__qualname__}@{LIBRARY_VERSION}'
         return data
 
+    @model_validator(mode='before')
+    @classmethod
+    def _set_event_result_type_from_generic_arg(cls, data: Any) -> Any:
+        """Automatically set event_result_type from Generic type parameter if not explicitly provided."""
+        if not isinstance(data, dict):
+            return data
+        
+        # Check if event_result_type is explicitly set
+        has_explicit_result_type = False
+        
+        # Check if it's in the input data
+        if 'event_result_type' in data and data['event_result_type'] is not None:
+            has_explicit_result_type = True
+        
+        # Check if it's explicitly set in the class annotations or attributes
+        elif hasattr(cls, '__annotations__') and 'event_result_type' in cls.__annotations__:
+            has_explicit_result_type = True
+        elif hasattr(cls, 'event_result_type') and cls.event_result_type is not None:
+            # Check if it's different from the default BaseEvent value
+            try:
+                base_default = BaseEvent.model_fields['event_result_type'].default
+                if cls.event_result_type != base_default:
+                    has_explicit_result_type = True
+            except Exception:
+                has_explicit_result_type = True
+        
+        # Only auto-set if not explicitly provided
+        if not has_explicit_result_type:
+            # Extract the generic type from BaseEvent[T]
+            # Note: We don't need frame inspection since pydantic has already resolved
+            # all types in the model_fields, including custom user types
+            extracted_type = _extract_baseevent_result_type(cls)
+            
+            # Set the type if we successfully resolved it
+            if extracted_type is not None:
+                data['event_result_type'] = extracted_type
+        
+        return cast(dict[str, Any], data)
+
     @property
     def event_completed_signal(self) -> asyncio.Event | None:
         """Lazily create asyncio.Event when accessed"""
@@ -324,7 +398,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         """Get all child events dispatched from within this event's handlers"""
         children: list[BaseEvent[Any]] = []
         for event_result in self.event_results.values():
-            children.extend(cast(list['BaseEvent[Any]'], event_result.event_children))  # type: ignore
+            children.extend(event_result.event_children)
         return children
 
     @property
@@ -378,8 +452,14 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         # wait for all handlers to finish processing
         assert self.event_completed_signal is not None, 'EventResult cannot be awaited outside of an async context'
         await asyncio.wait_for(self.event_completed_signal.wait(), timeout=timeout or self.event_timeout)
+        
+        # Wait for each result to complete, but don't raise errors yet
         for event_result in self.event_results.values():
-            await event_result
+            try:
+                await event_result
+            except Exception:
+                # Ignore exceptions here - we'll handle them based on raise_if_any below
+                pass
 
         event_results: dict[PythonIdStr, EventResult[T_EventResultType]] = {
             handler_key: event_result for handler_key, event_result in self.event_results.items()
@@ -423,7 +503,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         included_results = await self.event_results_filtered(
             timeout=timeout, include=include, raise_if_any=raise_if_any, raise_if_none=raise_if_none
         )
-        return {handler_id: event_result.result for handler_id, event_result in included_results.items()}
+        return {handler_id: cast(T_EventResultType | None, event_result.result) for handler_id, event_result in included_results.items()}
 
     async def event_results_by_handler_name(
         self,
@@ -436,7 +516,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         included_results = await self.event_results_filtered(
             timeout=timeout, include=include, raise_if_any=raise_if_any, raise_if_none=raise_if_none
         )
-        return {event_result.handler_name: event_result.result for event_result in included_results.values()}
+        return {event_result.handler_name: cast(T_EventResultType | None, event_result.result) for event_result in included_results.values()}
 
     async def event_result(
         self,
@@ -450,7 +530,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             timeout=timeout, include=include, raise_if_any=raise_if_any, raise_if_none=raise_if_none
         )
         results = list(valid_results.values())
-        return results[0].result if results else None
+        return cast(T_EventResultType | None, results[0].result) if results else None
 
     async def event_results_list(
         self,
@@ -463,7 +543,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         valid_results = await self.event_results_filtered(
             timeout=timeout, include=include, raise_if_any=raise_if_any, raise_if_none=raise_if_none
         )
-        return list(event_result.result for event_result in valid_results.values())
+        return [cast(T_EventResultType | None, event_result.result) for event_result in valid_results.values()]
 
     async def event_results_flat_dict(
         self,
@@ -477,7 +557,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 
         valid_results = await self.event_results_filtered(
             timeout=timeout,
-            include=lambda result: isinstance(result, dict) and include(result),
+            include=lambda event_result: isinstance(event_result.result, dict) and include(event_result),
             raise_if_any=raise_if_any,
             raise_if_none=raise_if_none,
         )
@@ -509,9 +589,9 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         """Assuming all handlers return lists, merge all the returned lists into a single flat list [*handler1_result, *handler2_result, ...]"""
         valid_results = await self.event_results_filtered(
             timeout=timeout,
-            include=lambda result: isinstance(result, list) and include(result),
-            raise_if_any=True,
-            raise_if_none=True,
+            include=lambda event_result: isinstance(event_result.result, list) and include(event_result),
+            raise_if_any=raise_if_any,
+            raise_if_none=raise_if_none,
         )
         merged_results: list[T_EventResultType | None] = []
         for event_result in valid_results.values():
@@ -659,13 +739,13 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
     model_config = ConfigDict(
         extra='forbid',
         arbitrary_types_allowed=True,
-        validate_assignment=True,
+        validate_assignment=False,  # Disable to allow flexible result types - validation handled in update()
         validate_default=True,
         revalidate_instances='always',
     )
 
     # Result fields, updated by the EventBus._execute_sync_or_async_handler() calling event_result.update(...)
-    result: T_EventResultType | None = None
+    result: T_EventResultType | BaseEvent[Any] | None = None
     error: BaseException | None = None
 
     # any child events that were emitted during handler execution are captured automatically and stored here to track hierarchy
@@ -684,7 +764,7 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
     event_id: UUIDStr
     handler_id: PythonIdStr
     handler_name: str
-    result_type: T_EventResultType | None = None
+    result_type: Any = None
     eventbus_id: PythonIdStr
     eventbus_name: PythonIdentifierStr
     timeout: float | None = None
@@ -693,6 +773,7 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
 
     # Completion signal
     _handler_completed_signal: asyncio.Event | None = PrivateAttr(default=None)
+
 
     @property
     def handler_completed_signal(self) -> asyncio.Event | None:
@@ -713,14 +794,14 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
         icon = '🏃' if self.status == 'pending' else '✅' if self.status == 'completed' else '❌'
         return f'{self.handler_name}#{self.handler_id[-4:]}() {icon}'
 
-    def __await__(self) -> Generator[Self, Any, T_EventResultType | None]:
+    def __await__(self) -> Generator[Self, Any, T_EventResultType | BaseEvent[Any] | None]:
         """
         Wait for this result to complete and return the result or raise error.
         Does not execute the handler itself, only waits for it to be marked completed by the EventBus.
         EventBus triggers handlers and calls event_result.update() to mark them as started or completed.
         """
 
-        async def wait_for_handler_to_complete_and_return_result() -> T_EventResultType | None:
+        async def wait_for_handler_to_complete_and_return_result() -> T_EventResultType | BaseEvent[Any] | None:
             assert self.handler_completed_signal is not None, 'EventResult cannot be awaited outside of an async context'
 
             try:
@@ -752,23 +833,33 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
             result: Any = kwargs['result']
             self.status = 'completed'
             if self.result_type is not None and result is not None:
-                # cast the return value to the expected type
-                try:
-                    if issubclass(self.result_type, BaseModel):
-                        # if expected result type is a pydantic model, validate it with pydantic
-                        self.result = cast(T_EventResultType, self.result_type.model_validate(dict(result)))
-                    else:
-                        # cast the return value to the expected type e.g. int(result) / str(result) / list(result) / etc.
-                        ResultType = TypeAdapter(self.result_type)
-                        self.result = cast(T_EventResultType, ResultType.validate_python(result))
+                # Always allow BaseEvent results without validation
+                # This is needed for event forwarding patterns like bus1.on('*', bus2.dispatch)
+                if isinstance(result, BaseEvent):
+                    self.result = cast(T_EventResultType, result)
+                else:
+                    # cast the return value to the expected type using TypeAdapter
+                    try:
+                        if issubclass(self.result_type, BaseModel):
+                            # if expected result type is a pydantic model, validate it with pydantic
+                            validated_result = self.result_type.model_validate(result)
+                        else:
+                            # cast the return value to the expected type e.g. int(result) / str(result) / list(result) / etc.
+                            ResultType = TypeAdapter(self.result_type)
+                            validated_result = ResultType.validate_python(result)
+                        
+                        # Normal assignment works, make sure validate_assignment=False otherwise pydantic will attempt to re-validate it a second time
+                        self.result = cast(T_EventResultType, validated_result)
 
-                except Exception as cast_error:
-                    self.error = ValueError(
-                        f'Event handler returned a value that did not match expected event_result_type: {self.result_type.__name__}({self.result}) -> {type(cast_error).__name__}: {cast_error} {self.error or ""}'
-                    )
-                    self.result = cast(T_EventResultType, None)
-                    self.status = 'error'
-                    return self
+                    except Exception as cast_error:
+                        self.error = ValueError(
+                            f'Event handler returned a value that did not match expected event_result_type: {self.result_type.__name__}({result}) -> {type(cast_error).__name__}: {cast_error}'
+                        )
+                        self.result = None
+                        self.status = 'error'
+            else:
+                # No result_type specified or result is None - assign directly
+                self.result = cast(T_EventResultType, result)
 
         if 'error' in kwargs:
             assert isinstance(kwargs['error'], (BaseException, str)), (

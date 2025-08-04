@@ -13,7 +13,7 @@ from bubus import BaseEvent, EventBus
 class ParentEvent(BaseEvent[str]):
     """Parent event that triggers child events"""
 
-    event_result_type = str
+    event_result_type: Any = str
 
     message: str
 
@@ -21,7 +21,7 @@ class ParentEvent(BaseEvent[str]):
 class ChildEvent(BaseEvent[str]):
     """Child event triggered by parent"""
 
-    event_result_type = str
+    event_result_type: Any = str
 
     data: str
 
@@ -29,7 +29,7 @@ class ChildEvent(BaseEvent[str]):
 class GrandchildEvent(BaseEvent[str]):
     """Grandchild event triggered by child"""
 
-    event_result_type = str
+    event_result_type: Any = str
 
     value: int
 
@@ -298,3 +298,176 @@ class TestParentEventTracking:
         assert len(child_events) == 2
         for child in child_events:
             assert child.event_parent_id == parent.event_id
+
+    async def test_event_children_tracking(self, eventbus: EventBus):
+        """Test that child events are tracked in parent's event_children"""
+        async def parent_handler(event: ParentEvent) -> str:
+            # Dispatch multiple child events
+            for i in range(3):
+                child = ChildEvent(data=f'child_{i}')
+                eventbus.dispatch(child)
+            return 'parent_done'
+        
+        async def child_handler(event: ChildEvent) -> str:
+            # Handler for child events so they complete
+            return f'handled_{event.data}'
+
+        eventbus.on('ParentEvent', parent_handler)
+        eventbus.on('ChildEvent', child_handler)
+        
+        # Dispatch parent event
+        parent = ParentEvent(message='test_children_tracking')
+        parent_event = eventbus.dispatch(parent)
+        
+        # Wait for all events to be processed
+        await eventbus.wait_until_idle()
+        
+        # Now await the parent event
+        await parent_event
+        
+        # Check that parent has child events tracked
+        assert len(parent.event_children) == 3
+        for i, child in enumerate(parent.event_children):
+            assert isinstance(child, ChildEvent)
+            assert child.data == f'child_{i}'
+            assert child.event_parent_id == parent.event_id
+
+    async def test_nested_event_children_tracking(self, eventbus: EventBus):
+        """Test multi-level child event tracking"""
+        async def parent_handler(event: ParentEvent) -> str:
+            child = ChildEvent(data='level1')
+            eventbus.dispatch(child)
+            return 'parent'
+        
+        async def child_handler(event: ChildEvent) -> str:
+            grandchild = GrandchildEvent(value=42)
+            eventbus.dispatch(grandchild)
+            return 'child'
+        
+        async def grandchild_handler(event: GrandchildEvent) -> str:
+            return f'grandchild_{event.value}'
+        
+        eventbus.on('ParentEvent', parent_handler)
+        eventbus.on('ChildEvent', child_handler)
+        eventbus.on('GrandchildEvent', grandchild_handler)
+        
+        parent = ParentEvent(message='nested_test')
+        parent_event = eventbus.dispatch(parent)
+        await eventbus.wait_until_idle()
+        await parent_event
+        
+        # Check parent has child
+        assert len(parent.event_children) == 1
+        child = parent.event_children[0]
+        assert isinstance(child, ChildEvent)
+        
+        # Check child has grandchild
+        assert len(child.event_children) == 1
+        grandchild = child.event_children[0]
+        assert isinstance(grandchild, GrandchildEvent)
+        assert grandchild.value == 42
+
+    async def test_multiple_handlers_event_children(self, eventbus: EventBus):
+        """Test event_children tracking with multiple handlers"""
+        async def handler1(event: ParentEvent) -> str:
+            child1 = ChildEvent(data='from_handler1')
+            eventbus.dispatch(child1)
+            return 'h1'
+        
+        async def handler2(event: ParentEvent) -> str:
+            # Dispatch 2 children from this handler
+            child2 = ChildEvent(data='from_handler2_a')
+            child3 = ChildEvent(data='from_handler2_b')
+            eventbus.dispatch(child2)
+            eventbus.dispatch(child3)
+            return 'h2'
+        
+        async def child_handler(event: ChildEvent) -> str:
+            return f'handled_{event.data}'
+        
+        eventbus.on('ParentEvent', handler1)
+        eventbus.on('ParentEvent', handler2)
+        eventbus.on('ChildEvent', child_handler)
+        
+        parent = ParentEvent(message='multi_handler_test')
+        parent_event = eventbus.dispatch(parent)
+        await eventbus.wait_until_idle()
+        await parent_event
+        
+        # Parent should have all 3 children from both handlers
+        assert len(parent.event_children) == 3
+        child_data = [child.data for child in parent.event_children if isinstance(child, ChildEvent)]
+        assert 'from_handler1' in child_data
+        assert 'from_handler2_a' in child_data
+        assert 'from_handler2_b' in child_data
+
+    async def test_event_children_empty_when_no_children(self, eventbus: EventBus):
+        """Test event_children is empty when handler doesn't dispatch children"""
+        async def handler(event: ParentEvent) -> str:
+            # No child events dispatched
+            return 'no_children'
+        
+        eventbus.on('ParentEvent', handler)
+        
+        parent = ParentEvent(message='no_children_test')
+        parent_event = eventbus.dispatch(parent)
+        await eventbus.wait_until_idle()
+        await parent_event
+        
+        # Parent should have no children
+        assert len(parent.event_children) == 0
+
+    async def test_forwarded_events_not_counted_as_children(self, eventbus: EventBus):
+        """Test that forwarded events (same event_id) are not counted as children"""
+        bus2 = EventBus(name='Bus2')
+        
+        try:
+            # Forward all events from bus1 to bus2
+            eventbus.on('*', bus2.dispatch)
+            
+            parent = ParentEvent(message='forward_test')
+            parent_event = eventbus.dispatch(parent)
+            await eventbus.wait_until_idle()
+            await bus2.wait_until_idle()
+            await parent_event
+            
+            # Parent should have no children (forwarding doesn't create children)
+            assert len(parent.event_children) == 0
+            
+        finally:
+            await bus2.stop(clear=True)
+
+    async def test_event_are_all_children_complete(self, eventbus: EventBus):
+        """Test the event_are_all_children_complete method"""
+        completion_order: list[str] = []
+        
+        async def parent_handler(event: ParentEvent) -> str:
+            child1 = ChildEvent(data='child1')
+            child2 = ChildEvent(data='child2')
+            eventbus.dispatch(child1)
+            eventbus.dispatch(child2)
+            completion_order.append('parent_handler')
+            return 'parent'
+        
+        async def child_handler(event: ChildEvent) -> str:
+            await asyncio.sleep(0.01)  # Simulate work
+            completion_order.append(f'child_handler_{event.data}')
+            return f'handled_{event.data}'
+        
+        eventbus.on('ParentEvent', parent_handler)
+        eventbus.on('ChildEvent', child_handler)
+        
+        parent = ParentEvent(message='completion_test')
+        parent_event = eventbus.dispatch(parent)
+        
+        # Check completion status during processing
+        assert not parent.event_are_all_children_complete()  # Children not complete yet
+        
+        # Wait for all processing
+        await parent_event
+        
+        # Now all children should be complete
+        assert parent.event_are_all_children_complete()
+        assert len(parent.event_children) == 2
+        for child in parent.event_children:
+            assert child.event_status == 'completed'
