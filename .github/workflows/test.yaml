@@ -99,12 +99,15 @@ jobs:
       
       - name: Combine coverage data
         run: |
-          # Install coverage if needed
-          uv pip install coverage
+          # Find all .coverage files and copy them with unique names
+          counter=1
+          for coverage_file in $(find coverage-data -name ".coverage" -type f); do
+            cp "$coverage_file" ".coverage.$counter"
+            counter=$((counter + 1))
+          done
           
-          # Combine all .coverage files
-          find coverage-data -name ".coverage" -exec cp {} .coverage.{} \;
-          uv run coverage combine .coverage.*
+          # Combine all coverage files
+          uv run coverage combine
           
           # Generate reports
           uv run coverage html

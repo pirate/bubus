@@ -812,14 +812,14 @@ class EventBus:
 
             # Wait for idle state
             await asyncio.wait_for(idle_task, timeout=timeout)
-            
+
             # Also ensure the runloop has had a chance to complete its current iteration
             # This prevents race conditions where we return while the runloop is still
             # in the middle of updating data structures
             if self._runloop_task and not self._runloop_task.done():
                 # Give the runloop a moment to finish its current step
                 await asyncio.sleep(0.01)
-                
+
                 # Double-check that we're still idle
                 if not self._on_idle.is_set():
                     # If not idle anymore, wait again

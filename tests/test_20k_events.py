@@ -112,13 +112,13 @@ async def test_20k_events_with_memory_control():
     print(f'Initial memory: {initial_memory:.1f} MB')
     print(f'Peak memory: {max_memory:.1f} MB (+{peak_growth:.1f} MB)')
     print(f'Final memory: {final_memory:.1f} MB (+{memory_growth:.1f} MB)')
-    
+
     # Debug: Check if event loop is still processing
-    print(f'DEBUG: Bus is running: {bus._is_running}')
-    print(f'DEBUG: Runloop task: {bus._runloop_task}')
-    if bus._runloop_task:
-        print(f'DEBUG: Runloop task done: {bus._runloop_task.done()}')
-    
+    print(f'DEBUG: Bus is running: {bus._is_running}')  # type: ignore
+    print(f'DEBUG: Runloop task: {bus._runloop_task}')  # type: ignore
+    if bus._runloop_task:  # type: ignore
+        print(f'DEBUG: Runloop task done: {bus._runloop_task.done()}')  # type: ignore
+
     # Safely get event history size without iterating
     try:
         history_size = len(bus.event_history)
