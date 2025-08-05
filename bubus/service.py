@@ -750,6 +750,10 @@ class EventBus:
         # Signal shutdown
         self._is_running = False
 
+        # Shutdown the queue to unblock any pending get() operations
+        if self.event_queue:
+            self.event_queue.shutdown()
+
         # Wait for the run loop task to finish
         if self._runloop_task and not self._runloop_task.done():
             # Give it a short time to finish cleanly
