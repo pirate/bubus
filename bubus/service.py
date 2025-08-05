@@ -754,21 +754,13 @@ class EventBus:
         if self.event_queue:
             self.event_queue.shutdown()
 
-        # Wait for the run loop task to finish
+        # Wait for the run loop task to finish / force-cancel it if it's hanging
         if self._runloop_task and not self._runloop_task.done():
-            # Give it a short time to finish cleanly
-            done, _pending = await asyncio.wait({self._runloop_task}, timeout=0.1)
-
-            if not done:
-                # If it doesn't finish in time, cancel it
+            await asyncio.wait({self._runloop_task}, timeout=0.1)
+            try:
                 self._runloop_task.cancel()
-                try:
-                    await self._runloop_task
-                except asyncio.CancelledError:
-                    pass
-                except Exception:
-                    # logger.debug(f'Exception while stopping {self}: {e}')
-                    pass
+            except Exception:
+                pass
 
         # Clear references
         self._runloop_task = None
@@ -869,6 +861,10 @@ class EventBus:
             # Wait for next event with timeout
             has_next_event, _pending = await asyncio.wait({get_next_queued_event}, timeout=wait_for_timeout)
             if has_next_event:
+                # Check if we're still running before returning the event
+                if not self._is_running:
+                    get_next_queued_event.cancel()
+                    return None
                 return await get_next_queued_event  # await to actually resolve it to the next event
             else:
                 # Get task timed out, cancel it cleanly to suppress warnings

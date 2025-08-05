@@ -129,7 +129,7 @@ async def test_20k_events_with_memory_control():
 
     # Explicitly clean up the bus to prevent hanging
     print('\nCleaning up EventBus...')
-    print(f'Before stop - Running: {bus._is_running}')   # type: ignore
+    print(f'Before stop - Running: {bus._is_running}')  # type: ignore
     print(f'Before stop - Runloop task: {bus._runloop_task}')  # type: ignore
     if bus._runloop_task:  # type: ignore
         print(f'  - Done: {bus._runloop_task.done()}')  # type: ignore
