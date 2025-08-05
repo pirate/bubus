@@ -964,7 +964,8 @@ class EventBus:
 
             # Find parent event in any bus's history
             parent_event = None
-            for bus in EventBus.all_instances:
+            # Create a list copy to avoid "Set changed size during iteration" error
+            for bus in list(EventBus.all_instances):
                 if bus and current.event_parent_id in bus.event_history:
                     parent_event = bus.event_history[current.event_parent_id]
                     break
@@ -1229,7 +1230,8 @@ class EventBus:
 
         # Find parent event in any bus's history
         parent_event = None
-        for bus in EventBus.all_instances:
+        # Create a list copy to avoid "Set changed size during iteration" error
+        for bus in list(EventBus.all_instances):
             if event.event_parent_id in bus.event_history:
                 parent_event = bus.event_history[event.event_parent_id]
                 break
@@ -1369,7 +1371,8 @@ class EventBus:
         bus_details: list[tuple[str, int, int, int]] = []
 
         # Iterate through all EventBus instances
-        for bus in EventBus.all_instances:
+        # Create a list copy to avoid "Set changed size during iteration" error
+        for bus in list(EventBus.all_instances):
             try:
                 bus_bytes = 0
 

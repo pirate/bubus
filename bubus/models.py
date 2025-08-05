@@ -300,7 +300,8 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
                     processed_any = False
 
                     # Process any queued events on all buses
-                    for bus in EventBus.all_instances:
+                    # Create a list copy to avoid "Set changed size during iteration" error
+                    for bus in list(EventBus.all_instances):
                         if not bus or not bus.event_queue:
                             continue
 
@@ -742,7 +743,8 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         current_bus_name = self.event_path[-1]
 
         # Find the bus by name
-        for bus in EventBus.all_instances:
+        # Create a list copy to avoid "Set changed size during iteration" error
+        for bus in list(EventBus.all_instances):
             if bus and hasattr(bus, 'name') and bus.name == current_bus_name:
                 return bus
 

@@ -140,7 +140,7 @@ data_bus = EventBus(name='DataBus')
 
 # Forward events between buses
 main_bus.on('LoginEvent', auth_bus.dispatch)  # if main bus gets LoginEvent, will forward to AuthBus
-auth_bus.on('*', data_bus.dispatch)  # auth bus will forward everythign to DataBus
+auth_bus.on('*', data_bus.dispatch)  # auth bus will forward everything to DataBus
 data_bus.on('*', main_bus.dispatch)  # don't worry! infinite loops are automatically prevented
 
 # Events flow through the hierarchy with tracking
