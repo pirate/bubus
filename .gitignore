@@ -21,6 +21,13 @@ CLAUDE.local.md
 # Build files
 dist/
 
+# Coverage files
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+
 
 # Secrets and sensitive files
 secrets.env
