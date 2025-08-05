@@ -107,37 +107,25 @@ jobs:
       
       - name: Combine coverage data
         run: |
-          # Debug: Show what was downloaded
-          echo "Contents of coverage-data:"
-          find coverage-data -type f -name "*" | head -20
-          
           # Find all .coverage files and copy them with unique names
           counter=1
           for coverage_file in $(find coverage-data -name ".coverage" -type f); do
-            echo "Found coverage file: $coverage_file"
             cp "$coverage_file" ".coverage.$counter"
             counter=$((counter + 1))
           done
-          
-          # If no .coverage files found, check if we have coverage.xml files
-          if [ $counter -eq 1 ]; then
-            echo "No .coverage files found. Checking structure..."
-            ls -la coverage-data/
-            ls -la coverage-data/*/
-          fi
-          
-          # Combine all coverage files
-          if [ $counter -gt 1 ]; then
-            uv run coverage combine
-            
-            # Generate reports
-            uv run coverage html
-            uv run coverage xml
-            uv run coverage report
-          else
-            echo "ERROR: No coverage data files found to combine"
-            exit 1
-          fi
+      
+      - name: Combine coverage & fail if it's <80%
+        run: |
+          uv tool install 'coverage[toml]'
+
+          coverage combine
+          coverage html --skip-covered --skip-empty
+
+          # Report and write to summary.
+          coverage report --format=markdown >> $GITHUB_STEP_SUMMARY
+
+          # Report again and fail if under 80%.
+          coverage report --fail-under=80
       
       - name: Upload combined coverage report
         uses: actions/upload-artifact@v4
