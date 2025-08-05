@@ -392,10 +392,10 @@ async def _execute_with_retries(
                 # Final failure
                 total_time = time.time() - start_time
                 sem_wait = time.time() - sem_start - total_time if semaphore_limit else 0
-
+                sem_str = f'Semaphore wait: {sem_wait:.1f}s. ' if sem_wait > 0 else ''
                 logger.error(
                     f'{func.__name__} failed after {retries + 1} attempts over {total_time:.1f}s. '
-                    f'Semaphore wait: {sem_wait:.1f}s. Final error: {type(e).__name__}: {e}'
+                    f'{sem_str}Final error: {type(e).__name__}: {e}'
                 )
                 raise
 
