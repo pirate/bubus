@@ -801,29 +801,41 @@ class EventBus:
         self._start()
         assert self._on_idle and self.event_queue, 'EventBus._start() must be called before wait_until_idle() is reached'
 
-        # First wait for the queue to be empty
-        # Then wait for idle state with timeout
-        join_task = asyncio.create_task(self.event_queue.join())
-        idle_task = asyncio.create_task(self._on_idle.wait())
+        start_time = asyncio.get_event_loop().time()
+        remaining_timeout = timeout
 
         try:
-            # Wait for queue to be empty
-            await asyncio.wait_for(join_task, timeout=timeout)
+            # First wait for the queue to be empty
+            join_task = asyncio.create_task(self.event_queue.join())
+            await asyncio.wait_for(join_task, timeout=remaining_timeout)
+
+            # Update remaining timeout
+            if timeout is not None:
+                elapsed = asyncio.get_event_loop().time() - start_time
+                remaining_timeout = max(0, timeout - elapsed)
 
             # Wait for idle state
-            await asyncio.wait_for(idle_task, timeout=timeout)
+            idle_task = asyncio.create_task(self._on_idle.wait())
+            await asyncio.wait_for(idle_task, timeout=remaining_timeout)
 
-            # Also ensure the runloop has had a chance to complete its current iteration
-            # This prevents race conditions where we return while the runloop is still
-            # in the middle of updating data structures
-            if self._runloop_task and not self._runloop_task.done():
-                # Give the runloop a moment to finish its current step
-                await asyncio.sleep(0.01)
+            # Critical: Ensure the runloop has settled by yielding control
+            # This allows the runloop to complete any in-flight operations
+            # and prevents race conditions with event_history access
+            await asyncio.sleep(0)  # Yield to event loop
 
-                # Double-check that we're still idle
-                if not self._on_idle.is_set():
-                    # If not idle anymore, wait again
-                    await asyncio.wait_for(self._on_idle.wait(), timeout=timeout)
+            # Double-check we're truly idle - if new events came in, wait again
+            while not self._on_idle.is_set() or self.events_started or self.events_pending:
+                if timeout is not None:
+                    elapsed = asyncio.get_event_loop().time() - start_time
+                    remaining_timeout = max(0, timeout - elapsed)
+                    if remaining_timeout <= 0:
+                        raise TimeoutError()
+
+                # Clear and wait again
+                self._on_idle.clear()
+                idle_task = asyncio.create_task(self._on_idle.wait())
+                await asyncio.wait_for(idle_task, timeout=remaining_timeout)
+                await asyncio.sleep(0)  # Yield again
 
         except TimeoutError:
             logger.warning(
@@ -836,6 +848,10 @@ class EventBus:
             while self._is_running:
                 try:
                     _processed_event = await self._run_loop_step()
+                    # Check if we should set idle state after processing
+                    if self._on_idle and self.event_queue:
+                        if not (self.events_pending or self.events_started or self.event_queue.qsize()):
+                            self._on_idle.set()
                 except QueueShutDown:
                     # Queue was shut down, exit cleanly
                     break
