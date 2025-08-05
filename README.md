@@ -365,7 +365,11 @@ There are two ways to get return values from event handlers:
 **1. Have handlers return their values directly, which puts them in `event.event_results`:**
 
 ```python
-def do_some_math(event: DoSomeMathEvent[int]) -> int:                                                                                                                        
+class DoSomeMathEvent(BaseEvent[int]):  # BaseEvent[int] = expect int returned from all event handlers
+    a: int
+    b: int
+
+def do_some_math(event: DoSomeMathEvent) -> int:                                                                                                                        
     return event.a + event.b
 
 event_bus.on(DoSomeMathEvent, do_some_math)
