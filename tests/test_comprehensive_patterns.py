@@ -76,13 +76,15 @@ async def test_comprehensive_patterns():
         # 1. The event path includes bus2
         assert 'bus2' in child_event_sync.event_path
         # 2. Debug what handlers processed this event
-        print(f'   Handlers that processed this event:')
+        print('   Handlers that processed this event:')
         for result in child_event_sync.event_results.values():
             print(f'     - {result.handler_name} (bus: {result.eventbus_name})')
         # The event was processed by bus1 using bus2.dispatch handler
-        assert any('bus2' in result.handler_name and 'dispatch' in result.handler_name 
-                   for result in child_event_sync.event_results.values())
-        print(f'   Event was successfully forwarded to bus2')
+        assert any(
+            'bus2' in result.handler_name and 'dispatch' in result.handler_name
+            for result in child_event_sync.event_results.values()
+        )
+        print('   Event was successfully forwarded to bus2')
 
         # Check parent-child relationships
         print('\n4. Checking parent-child relationships...')

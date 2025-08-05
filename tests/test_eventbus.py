@@ -16,7 +16,6 @@ Tests cover:
 
 import asyncio
 import json
-import logging
 import os
 import time
 from datetime import datetime, timezone
@@ -1648,17 +1647,17 @@ class TestComplexIntegration:
             event = await event
 
             # Check that handlers returning dicts succeeded
-            dict_results = [r for r in event.event_results.values() 
-                          if r.handler_name in ['dict_handler1', 'dict_handler2']]
+            dict_results = [r for r in event.event_results.values() if r.handler_name in ['dict_handler1', 'dict_handler2']]
             assert all(r.status == 'completed' for r in dict_results)
             assert all(isinstance(r.result, dict) for r in dict_results)
 
             # Check that handlers returning wrong types have errors
-            wrong_type_results = [r for r in event.event_results.values() 
-                                if r.handler_name in ['string_handler', 'int_handler', 'list_handler']]
+            wrong_type_results = [
+                r for r in event.event_results.values() if r.handler_name in ['string_handler', 'int_handler', 'list_handler']
+            ]
             assert all(r.status == 'error' for r in wrong_type_results)
             assert all(r.error is not None for r in wrong_type_results)
-            
+
             # Check error messages mention type mismatch
             for result in wrong_type_results:
                 error_msg = str(result.error)
@@ -1711,17 +1710,17 @@ class TestComplexIntegration:
             event = await event
 
             # Check that handlers returning lists succeeded
-            list_results = [r for r in event.event_results.values() 
-                          if r.handler_name in ['list_handler1', 'list_handler2']]
+            list_results = [r for r in event.event_results.values() if r.handler_name in ['list_handler1', 'list_handler2']]
             assert all(r.status == 'completed' for r in list_results)
             assert all(isinstance(r.result, list) for r in list_results)
 
             # Check that handlers returning wrong types have errors
-            wrong_type_results = [r for r in event.event_results.values() 
-                                if r.handler_name in ['dict_handler', 'string_handler', 'int_handler']]
+            wrong_type_results = [
+                r for r in event.event_results.values() if r.handler_name in ['dict_handler', 'string_handler', 'int_handler']
+            ]
             assert all(r.status == 'error' for r in wrong_type_results)
             assert all(r.error is not None for r in wrong_type_results)
-            
+
             # Check error messages mention type mismatch
             for result in wrong_type_results:
                 error_msg = str(result.error)

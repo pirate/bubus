@@ -169,9 +169,13 @@ def get_handler_id(handler: EventHandler, eventbus: Any = None) -> str:
     return f'{id(eventbus)}.{id(handler)}'
 
 
-def _extract_baseevent_result_type(cls: type) -> Any:
-    """Extract T_EventResultType Generic arg from BaseEvent[T_EventResultType] subclasses using pydantic generic metadata."""
-    
+def _extract_basemodel_generic_arg(cls: type) -> Any:
+    """
+    Extract T_EventResultType Generic arg from BaseModel[T_EventResultType] subclasses using pydantic generic metadata.
+    Needed because pydantic messes with the mro and obscures the Generic from the bases list.
+    https://github.com/pydantic/pydantic/issues/8410
+    """
+
     # Look through MRO for a parameterized BaseEvent parent
     for parent in cls.__mro__:
         if hasattr(parent, '__pydantic_generic_metadata__'):
@@ -182,7 +186,7 @@ def _extract_baseevent_result_type(cls: type) -> Any:
             if origin is BaseEvent and args and len(args) > 0:
                 result = args[0]
                 return result
-    
+
     return None
 
 
@@ -207,10 +211,9 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     )  # long because it can include long function names / module paths
     event_timeout: float | None = Field(default=300.0, description='Timeout in seconds for event to finish processing')
     event_result_type: Any = Field(
-        default=None, 
-        description='Type to cast/validate handler return values (e.g. int, str, bytes, BaseModel subclass)'
+        default=None, description='Type to cast/validate handler return values (e.g. int, str, bytes, BaseModel subclass)'
     )
-    
+
     @field_serializer('event_result_type')
     def event_result_type_serializer(self, value: Any) -> str | None:
         """Serialize event_result_type to a string representation"""
@@ -345,14 +348,14 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         """Automatically set event_result_type from Generic type parameter if not explicitly provided."""
         if not isinstance(data, dict):
             return data
-        
+
         # Check if event_result_type is explicitly set
         has_explicit_result_type = False
-        
+
         # Check if it's in the input data
         if 'event_result_type' in data and data['event_result_type'] is not None:
             has_explicit_result_type = True
-        
+
         # Check if it's explicitly set in the class annotations or attributes
         elif hasattr(cls, '__annotations__') and 'event_result_type' in cls.__annotations__:
             has_explicit_result_type = True
@@ -364,18 +367,18 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
                     has_explicit_result_type = True
             except Exception:
                 has_explicit_result_type = True
-        
+
         # Only auto-set if not explicitly provided
         if not has_explicit_result_type:
             # Extract the generic type from BaseEvent[T]
             # Note: We don't need frame inspection since pydantic has already resolved
             # all types in the model_fields, including custom user types
-            extracted_type = _extract_baseevent_result_type(cls)
-            
+            extracted_type = _extract_basemodel_generic_arg(cls)
+
             # Set the type if we successfully resolved it
             if extracted_type is not None:
                 data['event_result_type'] = extracted_type
-        
+
         return cast(dict[str, Any], data)
 
     @property
@@ -452,7 +455,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         # wait for all handlers to finish processing
         assert self.event_completed_signal is not None, 'EventResult cannot be awaited outside of an async context'
         await asyncio.wait_for(self.event_completed_signal.wait(), timeout=timeout or self.event_timeout)
-        
+
         # Wait for each result to complete, but don't raise errors yet
         for event_result in self.event_results.values():
             try:
@@ -503,7 +506,10 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         included_results = await self.event_results_filtered(
             timeout=timeout, include=include, raise_if_any=raise_if_any, raise_if_none=raise_if_none
         )
-        return {handler_id: cast(T_EventResultType | None, event_result.result) for handler_id, event_result in included_results.items()}
+        return {
+            handler_id: cast(T_EventResultType | None, event_result.result)
+            for handler_id, event_result in included_results.items()
+        }
 
     async def event_results_by_handler_name(
         self,
@@ -516,7 +522,10 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         included_results = await self.event_results_filtered(
             timeout=timeout, include=include, raise_if_any=raise_if_any, raise_if_none=raise_if_none
         )
-        return {event_result.handler_name: cast(T_EventResultType | None, event_result.result) for event_result in included_results.values()}
+        return {
+            event_result.handler_name: cast(T_EventResultType | None, event_result.result)
+            for event_result in included_results.values()
+        }
 
     async def event_result(
         self,
@@ -656,12 +665,17 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             # Check if all handler results are done
             all_handlers_done = all(result.status in ('completed', 'error') for result in self.event_results.values())
             if not all_handlers_done:
-                logger.debug(f'Event {self} not complete - waiting for handlers: {[r for r in self.event_results.values() if r.status not in ("completed", "error")]}')
+                logger.debug(
+                    f'Event {self} not complete - waiting for handlers: {[r for r in self.event_results.values() if r.status not in ("completed", "error")]}'
+                )
                 return
 
             # Recursively check if all child events are also complete
             if not self.event_are_all_children_complete():
-                logger.debug(f'Event {self} not complete - waiting for child events')
+                incomplete_children = [c for c in self.event_children if c.event_status != 'completed']
+                logger.debug(
+                    f'Event {self} not complete - waiting for {len(incomplete_children)} child events: {incomplete_children}'
+                )
                 return
 
             # All handlers and all child events are done
@@ -674,12 +688,12 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         """Recursively check if all child events and their descendants are complete"""
         if _visited is None:
             _visited = set()
-        
+
         # Prevent infinite recursion on circular references
         if self.event_id in _visited:
             return True
         _visited.add(self.event_id)
-        
+
         for child_event in self.event_children:
             if child_event.event_status != 'completed':
                 logger.debug(f'Event {self} has incomplete child {child_event}')
@@ -856,7 +870,7 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
                             # cast the return value to the expected type e.g. int(result) / str(result) / list(result) / etc.
                             ResultType = TypeAdapter(self.result_type)
                             validated_result = ResultType.validate_python(result)
-                        
+
                         # Normal assignment works, make sure validate_assignment=False otherwise pydantic will attempt to re-validate it a second time
                         self.result = cast(T_EventResultType, validated_result)
 

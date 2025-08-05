@@ -499,7 +499,7 @@ class EventBus:
             current_event: 'BaseEvent[Any] | None' = _current_event_context.get()
             if current_event is not None:
                 event.event_parent_id = current_event.event_id
-        
+
         # Track child events - if we're inside a handler, add this event to the handler's event_children list
         # Only track if this is a NEW event (not forwarding an existing event)
         current_handler_id = _current_handler_id_context.get()
@@ -924,29 +924,29 @@ class EventBus:
 
         # Mark event as complete if all handlers are done
         event.event_mark_complete_if_all_handlers_completed()
-        
+
         # After processing this event, check if any parent events can now be marked complete
         # We do this by walking up the parent chain
         current = event
         checked_ids: set[str] = set()
-        
+
         while current.event_parent_id and current.event_parent_id not in checked_ids:
             checked_ids.add(current.event_parent_id)
-            
+
             # Find parent event in any bus's history
             parent_event = None
             for bus in EventBus.all_instances:
                 if bus and current.event_parent_id in bus.event_history:
                     parent_event = bus.event_history[current.event_parent_id]
                     break
-            
+
             if not parent_event:
                 break
-                
+
             # Check if parent can be marked complete
             if parent_event.event_completed_signal and not parent_event.event_completed_signal.is_set():
                 parent_event.event_mark_complete_if_all_handlers_completed()
-            
+
             # Move up the chain
             current = parent_event
 

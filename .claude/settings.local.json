@@ -1,17 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python -m pytest tests/test_eventbus.py::TestEventTypeOverride -xvs)",
-      "Bash(python -m pytest tests/test_eventbus.py::TestEventTypeOverride::test_automatic_event_type_derivation -xvs)",
-      "Bash(python -m pytest tests/test_eventbus.py -x)",
       "Bash(pytest:*)",
-      "Bash(rg:*)",
-      "Bash(python -m pytest tests/test_event_children.py -xvs)",
-      "Bash(uv run pytest:*)",
-      "Bash(python -m pytest tests/ -v --timeout=60)",
       "Bash(pyright:*)",
-      "Bash(python -m pytest tests/test_semaphores.py -v)",
-      "Bash(python -m pytest tests/ -v)",
+      "Bash(uv run pytest:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(rg:*)",
       "Bash(grep:*)",
       "Bash(python:*)",
       "Bash(for i in {1..5})",
@@ -19,24 +13,15 @@
       "Bash(echo:*)",
       "Bash(done)",
       "Bash(do echo \"Run $i:\")",
-      "Bash(python -m pytest tests/test_event_bus_property.py -v)",
-      "Bash(.venv/bin/pytest tests/ -v)",
-      "Bash(.venv/bin/pytest tests/ -v --timeout=60)",
       "Bash(.venv/bin/python:*)",
       "Bash(.venv/bin/pyright:*)",
-      "Bash(.venv/bin/pytest tests/ -x --timeout=30)",
-      "Bash(.venv/bin/pytest tests/test_auto_event_result_type.py::test_module_level_types_auto_extraction -v)",
-      "Bash(.venv/bin/pytest tests/test_auto_event_result_type.py::test_module_level_runtime_enforcement -v -s)",
-      "Bash(.venv/bin/pytest tests/ -v --timeout=30)",
-      "Bash(.venv/bin/pytest tests/test_auto_event_result_type.py::test_builtin_types_auto_extraction -v -s)",
-      "Bash(.venv/bin/pytest tests/test_auto_event_result_type.py -v)",
-      "Bash(.venv/bin/pytest tests/test_20k_events.py::test_20k_events_with_memory_control -v -s)",
-      "Bash(.venv/bin/pytest tests/test_comprehensive_patterns.py::test_comprehensive_patterns -v -s)",
       "Bash(.venv/bin/python:*)",
-      "Bash(.venv/bin/pytest tests/test_comprehensive_patterns.py::test_comprehensive_patterns -v -s --tb=short)",
-      "Bash(.venv/bin/pytest tests/test_comprehensive_patterns.py::test_comprehensive_patterns -v -s --tb=short)",
+      "Bash(.venv/bin/pytest:*)",
       "Bash(.venv/bin/pytest tests/ -x)",
-      "Bash(.venv/bin/pytest tests/ -v --tb=short)"
+      "Bash(.venv/bin/pytest tests/ -v --tb=short)",
+      "Bash(env BUBUS_LOG_LEVEL=DEBUG timeout 20 .venv/bin/python:*)"
+      "Bash(env BUBUS_LOG_LEVEL=DEBUG timeout 20 .venv/bin/pytest:*)"
+      "Bash(env BUBUS_LOG_LEVEL=DEBUG timeout 20 uv run:*)"
     ],
     "deny": []
   }
