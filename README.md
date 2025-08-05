@@ -48,6 +48,8 @@ print(f"Login handled: {result.event_results}")
 
 ## ✨ Features
 
+<br/>
+
 ### 🔠 Type-Safe Events with Pydantic
 
 Define events as Pydantic models with full type checking and validation:
@@ -70,6 +72,8 @@ event = OrderCreatedEvent(
     items=[{"sku": "ITEM-1", "quantity": 2}]
 )
 ```
+
+<br/>
 
 ### 🔀 Async and Sync Handler Support
 
@@ -112,6 +116,8 @@ bus.on('MyEvent', SomeClass.handler_can_be_classmethods)
 bus.on('MyEvent', SomeClass.handlers_can_be_staticmethods)
 ```
 
+<br/>
+
 ### 🔎 Event Pattern Matching
 
 Subscribe to events using multiple patterns:
@@ -126,6 +132,8 @@ bus.on(UserActionEvent, handler)
 # Wildcard - handle all events
 bus.on('*', universal_handler)
 ```
+
+<br/>
 
 ### ⏩ Forward `Events` Between `EventBus`s 
 
@@ -149,6 +157,8 @@ await event
 print(event.event_path)  # ['MainBus', 'AuthBus', 'DataBus']  # list of buses that have already procssed the event
 ```
 
+<br/>
+
 ### 🔱 Event Results Aggregation
 
 Collect and aggregate results from multiple handlers:
@@ -171,6 +181,8 @@ config = await event.event_results_flat_dict(raise_if_conflicts=False)
 # Or get individual results
 results = await event.event_results()
 ```
+
+<br/>
 
 ### 🚦 FIFO Event Processing
 
@@ -204,6 +216,8 @@ bus.on(MainEvent, main_handler)
 await bus.dispatch(MainEvent()).event_result()
 # result from awaiting child event: xyz123
 ```
+
+<br/>
 
 ### 🧹 Memory Management
 
@@ -239,6 +253,8 @@ finally:
 - Use `bus.stop(clear=True)` to completely free memory for unused buses
 - To avoid memory leaks from big events, the default limits are intentionally kept low. events are normally processed as they come in, and there is rarely a need to keep every event in memory longer after its complete. long-term storage should be accomplished using other mechanisms, like the WAL
 
+<br/>
+
 ### ⛓️ Parallel Handler Execution
 
 Enable parallel processing of handlers for better performance.  
@@ -256,6 +272,8 @@ start = time.time()
 await bus.dispatch(DataEvent())
 # Total time: ~1 second (not 2)
 ```
+
+<br/>
 
 ### 🪆 Dispatch Nested Child Events From Handlers
 
@@ -296,6 +314,7 @@ if __name__ == '__main__':
 
 <img width="1145" alt="image" src="https://github.com/user-attachments/assets/f94684a6-7694-4066-b948-46925f47b56c" />
 
+<br/>
 
 ### ⏳ Expect an Event to be Dispatched
 
@@ -339,24 +358,7 @@ event_bus.on(GenerateInvoiceEvent, on_generate_invoice_pdf)
 > [!IMPORTANT]
 > `expect()` resolves when the event is first *dispatched* to the `EventBus`, not when it completes. `await response_event` to get the completed event.
 
-### 📝 Write-Ahead Logging
-
-Persist events automatically to a `jsonl` file for future replay and debugging:
-
-```python
-# Enable WAL event log persistence (optional)
-bus = EventBus(name='MyBus', wal_path='./events.jsonl')
-
-# All completed events are automatically appended as JSON lines to the end
-bus.dispatch(SecondEventAbc(some_key="banana"))
-```
-
-`./events.jsonl`:
-```json
-{"event_type": "FirstEventXyz", "event_created_at": "2025-07-10T20:39:56.462000+00:00", "some_key": "some_val", ...}
-{"event_type": "SecondEventAbc", ..., "some_key": "banana"}
-...
-```
+<br/>
 
 ### 🎯 Event Handler Return Values
 
@@ -452,6 +454,27 @@ event_bus.on(FetchInboxEvent, fetch_from_gmail)
 
 # Return values are automatically validated as list[EmailMessage]
 email_list = await event_bus.dispatch(FetchInboxEvent(account_id='124', ...)).event_result()
+```
+
+<br/>
+
+### 📝 Write-Ahead Logging
+
+Persist events automatically to a `jsonl` file for future replay and debugging:
+
+```python
+# Enable WAL event log persistence (optional)
+bus = EventBus(name='MyBus', wal_path='./events.jsonl')
+
+# All completed events are automatically appended as JSON lines to the end
+bus.dispatch(SecondEventAbc(some_key="banana"))
+```
+
+`./events.jsonl`:
+```json
+{"event_type": "FirstEventXyz", "event_created_at": "2025-07-10T20:39:56.462000+00:00", "some_key": "some_val", ...}
+{"event_type": "SecondEventAbc", ..., "some_key": "banana"}
+...
 ```
 
 <br/>
