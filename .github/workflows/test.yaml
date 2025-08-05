@@ -67,15 +67,13 @@ jobs:
 
       - run: uv sync --dev --all-extras
 
-      - run: pytest -x tests/${{ matrix.test_filename }}.py --cov=bubus --cov-report=html --cov-report=xml --cov-report=term --cov-append
+      - run: pytest -x tests/${{ matrix.test_filename }}.py --cov=bubus --cov-report=term
       
       - name: Upload coverage data
         uses: actions/upload-artifact@v4
         with:
           name: coverage-${{ matrix.test_filename }}
-          path: |
-            .coverage
-            coverage.xml
+          path: .coverage
           retention-days: 7
 
   coverage:
@@ -99,20 +97,37 @@ jobs:
       
       - name: Combine coverage data
         run: |
+          # Debug: Show what was downloaded
+          echo "Contents of coverage-data:"
+          find coverage-data -type f -name "*" | head -20
+          
           # Find all .coverage files and copy them with unique names
           counter=1
           for coverage_file in $(find coverage-data -name ".coverage" -type f); do
+            echo "Found coverage file: $coverage_file"
             cp "$coverage_file" ".coverage.$counter"
             counter=$((counter + 1))
           done
           
-          # Combine all coverage files
-          uv run coverage combine
+          # If no .coverage files found, check if we have coverage.xml files
+          if [ $counter -eq 1 ]; then
+            echo "No .coverage files found. Checking structure..."
+            ls -la coverage-data/
+            ls -la coverage-data/*/
+          fi
           
-          # Generate reports
-          uv run coverage html
-          uv run coverage xml
-          uv run coverage report
+          # Combine all coverage files
+          if [ $counter -gt 1 ]; then
+            uv run coverage combine
+            
+            # Generate reports
+            uv run coverage html
+            uv run coverage xml
+            uv run coverage report
+          else
+            echo "ERROR: No coverage data files found to combine"
+            exit 1
+          fi
       
       - name: Upload combined coverage report
         uses: actions/upload-artifact@v4
