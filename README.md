@@ -221,66 +221,6 @@ await bus.dispatch(MainEvent()).event_result()
 
 <br/>
 
-### 🧹 Memory Management
-
-EventBus includes automatic memory management to prevent unbounded growth in long-running applications:
-
-```python
-# Create a bus with memory limits (default: 50 events)
-bus = EventBus(max_history_size=100)  # Keep max 100 events in history
-
-# Or disable memory limits for unlimited history
-bus = EventBus(max_history_size=None)
-```
-
-**Automatic Cleanup:**
-- When `max_history_size` is set, EventBus automatically removes old events when the limit is exceeded
-- Completed events are removed first (oldest first), then started events, then pending events
-- This ensures active events are preserved while cleaning up old completed events
-
-**Manual Memory Management:**
-```python
-# For request-scoped buses (e.g. web servers), clear all memory after each request
-try:
-    event_service = EventService()  # Creates internal EventBus
-    await event_service.process_request()
-finally:
-    # Clear all event history and remove from global tracking
-    await event_service.eventbus.stop(clear=True)
-```
-
-**Memory Monitoring:**
-- EventBus automatically monitors total memory usage across all instances
-- Warnings are logged when total memory exceeds 50MB
-- Use `bus.stop(clear=True)` to completely free memory for unused buses
-- To avoid memory leaks from big events, the default limits are intentionally kept low. events are normally processed as they come in, and there is rarely a need to keep every event in memory longer after its complete. long-term storage should be accomplished using other mechanisms, like the WAL
-
-<br/>
-
-### ⛓️ Parallel Handler Execution
-
-> [!CAUTION]
-> **Not Recommended.** Only for advanced users willing to implement their own concurrency control.
-
-Enable parallel processing of handlers for better performance.  
-The harsh tradeoff is less deterministic ordering as handler execution order will not be guaranteed when run in parallel. 
-(It's very hard to write non-flaky/reliable applications when handler execution order is not guaranteed.)
-
-```python
-# Create bus with parallel handler execution
-bus = EventBus(parallel_handlers=True)
-
-# Multiple handlers run concurrently for each event
-bus.on('DataEvent', slow_handler_1)  # Takes 1 second
-bus.on('DataEvent', slow_handler_2)  # Takes 1 second
-
-start = time.time()
-await bus.dispatch(DataEvent())
-# Total time: ~1 second (not 2)
-```
-
-<br/>
-
 ### 🪆 Dispatch Nested Child Events From Handlers
 
 Automatically track event relationships and causality tree:
@@ -320,7 +260,7 @@ if __name__ == '__main__':
 
 <img width="1145" alt="image" src="https://github.com/user-attachments/assets/f94684a6-7694-4066-b948-46925f47b56c" />
 
-<br/>
+<br/><br/>
 
 ### ⏳ Expect an Event to be Dispatched
 
@@ -460,6 +400,66 @@ event_bus.on(FetchInboxEvent, fetch_from_gmail)
 
 # Return values are automatically validated as list[EmailMessage]
 email_list = await event_bus.dispatch(FetchInboxEvent(account_id='124', ...)).event_result()
+```
+
+<br/>
+
+### 🧹 Memory Management
+
+EventBus includes automatic memory management to prevent unbounded growth in long-running applications:
+
+```python
+# Create a bus with memory limits (default: 50 events)
+bus = EventBus(max_history_size=100)  # Keep max 100 events in history
+
+# Or disable memory limits for unlimited history
+bus = EventBus(max_history_size=None)
+```
+
+**Automatic Cleanup:**
+- When `max_history_size` is set, EventBus automatically removes old events when the limit is exceeded
+- Completed events are removed first (oldest first), then started events, then pending events
+- This ensures active events are preserved while cleaning up old completed events
+
+**Manual Memory Management:**
+```python
+# For request-scoped buses (e.g. web servers), clear all memory after each request
+try:
+    event_service = EventService()  # Creates internal EventBus
+    await event_service.process_request()
+finally:
+    # Clear all event history and remove from global tracking
+    await event_service.eventbus.stop(clear=True)
+```
+
+**Memory Monitoring:**
+- EventBus automatically monitors total memory usage across all instances
+- Warnings are logged when total memory exceeds 50MB
+- Use `bus.stop(clear=True)` to completely free memory for unused buses
+- To avoid memory leaks from big events, the default limits are intentionally kept low. events are normally processed as they come in, and there is rarely a need to keep every event in memory longer after its complete. long-term storage should be accomplished using other mechanisms, like the WAL
+
+<br/>
+
+### ⛓️ Parallel Handler Execution
+
+> [!CAUTION]
+> **Not Recommended.** Only for advanced users willing to implement their own concurrency control.
+
+Enable parallel processing of handlers for better performance.  
+The harsh tradeoff is less deterministic ordering as handler execution order will not be guaranteed when run in parallel. 
+(It's very hard to write non-flaky/reliable applications when handler execution order is not guaranteed.)
+
+```python
+# Create bus with parallel handler execution
+bus = EventBus(parallel_handlers=True)
+
+# Multiple handlers run concurrently for each event
+bus.on('DataEvent', slow_handler_1)  # Takes 1 second
+bus.on('DataEvent', slow_handler_2)  # Takes 1 second
+
+start = time.time()
+await bus.dispatch(DataEvent())
+# Total time: ~1 second (not 2)
 ```
 
 <br/>
