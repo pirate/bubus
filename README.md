@@ -6,7 +6,7 @@ It's designed for quickly building event-driven applications with Python in a wa
 
 It provides a [pydantic](https://docs.pydantic.dev/latest/)-based API for implementing publish-subscribe patterns with type safety, async/sync handler support, and advanced features like event forwarding between buses.
 
-♾️ It's inspired by the simplicity of `JS`'s async system and DOM events APIs, and it aims to bring a fully type-checked [`EventTarget`](https://developer.mozilla.org/en-US/docs/Web/API/EventTarget)-style API to Python.
+♾️ It's inspired by the simplicity of async and events in `JS`, we aim to bring a fully type-checked [`EventTarget`](https://developer.mozilla.org/en-US/docs/Web/API/EventTarget)-style API to Python.
 
 <br/>
 
@@ -23,25 +23,22 @@ import asyncio
 from bubus import EventBus, BaseEvent
 from your_auth_events import AuthRequestEvent, AuthResponseEvent
 
-bus = EventBus()
-
 class UserLoginEvent(BaseEvent):
     username: str
-    timestamp: float
+    is_admin: bool
 
-async def handle_login(login_event: UserLoginEvent):
-    auth_request = await bus.dispatch(AuthRequestEvent(...))  # dispatch a nested event
-    auth_response = await bus.expect(AuthResponseEvent)       # wait for an event to be seen
+async def handle_login(event: UserLoginEvent):
+    auth_request = await event.event_bus.dispatch(AuthRequestEvent(...))  # nested events supported
+    auth_response = await event.event_bus.expect(AuthResponseEvent, timeout=30.0)
+    return f"User {event.username} logged in admin={event.is_admin} with API response: {await auth_response.event_result()}"
 
-    print(f"User {event.username} logged in at {event.timestamp} with API key: {await auth_response.event_result()}")
-    return {"status": "success", "user": event.username}
-
-
+bus = EventBus()
 bus.on(UserLoginEvent, handle_login)
+bus.on(AuthRequestEvent, AuthAPI.post)
 
-event = bus.dispatch(UserLoginEvent(username="alice", timestamp=1234567890))
-result = await event
-print(f"Login handled: {result.event_results}")
+event = bus.dispatch(UserLoginEvent(username="alice", is_admin=True))
+print(await event.event_result())
+# User alice logged in admin=True with API response: {...}
 ```
 
 <br/>
