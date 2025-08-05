@@ -51,27 +51,19 @@ print(await event.event_result())
 
 <br/>
 
-### 🔠 Type-Safe Events with Pydantic
+### 🔎 Event Pattern Matching
 
-Define events as Pydantic models with full type checking and validation:
+Subscribe to events using multiple patterns:
 
 ```python
-from typing import Any
-from bubus import BaseEvent
+# By event model class (recommended for best type hinting)
+bus.on(UserActionEvent, handler)
 
-class OrderCreatedEvent(BaseEvent):
-    order_id: str
-    customer_id: str
-    total_amount: float
-    items: list[dict[str, Any]]
+# By event type string
+bus.on('UserActionEvent', handler)
 
-# Events are automatically validated
-event = OrderCreatedEvent(
-    order_id="ORD-123",
-    customer_id="CUST-456", 
-    total_amount=99.99,
-    items=[{"sku": "ITEM-1", "quantity": 2}]
-)
+# Wildcard - handle all events
+bus.on('*', universal_handler)
 ```
 
 <br/>
@@ -119,22 +111,36 @@ bus.on(SomeEvent, SomeClass.handlers_can_be_staticmethods)
 
 <br/>
 
-### 🔎 Event Pattern Matching
 
-Subscribe to events using multiple patterns:
+### 🔠 Type-Safe Events with Pydantic
+
+Define events as Pydantic models with full type checking and validation:
 
 ```python
-# By event model class (recommended for best type hinting)
-bus.on(UserActionEvent, handler)
+from typing import Any
+from bubus import BaseEvent
 
-# By event type string
-bus.on('UserActionEvent', handler)
+class OrderCreatedEvent(BaseEvent):
+    order_id: str
+    customer_id: str
+    total_amount: float
+    items: list[dict[str, Any]]
 
-# Wildcard - handle all events
-bus.on('*', universal_handler)
+# Events are automatically validated
+event = OrderCreatedEvent(
+    order_id="ORD-123",
+    customer_id="CUST-456", 
+    total_amount=99.99,
+    items=[{"sku": "ITEM-1", "quantity": 2}]
+)
 ```
 
+> [!TIP]
+> You can also enforce the types of [event handler return values](#-event-handler-return-values).
+
 <br/>
+
+
 
 ### ⏩ Forward `Events` Between `EventBus`s 
 
