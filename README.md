@@ -388,7 +388,7 @@ print(result_event.final_sum)
 
 #### Typed Return Values with Auto-Detection
 
-Bubus automatically detects the expected return type from your event's generic parameter:
+Bubus automatically detects and validates handler return types using the generic parameter in `BaseEvent[T]`. When you define an event like `BaseEvent[str]`, Bubus knows that handlers should return `str` values:
 
 ```python
 class ScreenshotEvent(BaseEvent[bytes]):
@@ -407,6 +407,21 @@ event_bus.on(ScreenshotEvent, on_ScreenshotEvent)
 # Handler return values are automatically validated against the bytes type
 screenshot = await event_bus.dispatch(ScreenshotEvent(url='https://example.com')).event_result()
 assert isinstance(screenshot, bytes)
+```
+
+**Important:** The validation uses Pydantic's `TypeAdapter`, which validates but does not coerce types. Handlers must return the exact type specified:
+
+```python
+class StringEvent(BaseEvent[str]):
+    pass
+
+# ✅ This works - returns the expected str type
+def good_handler(event: StringEvent) -> str:
+    return "hello"
+
+# ❌ This fails validation - returns int instead of str
+def bad_handler(event: StringEvent) -> str:
+    return 42  # ValidationError: expected str, got int
 ```
 
 This also works with complex types and Pydantic models:
@@ -429,6 +444,12 @@ event_bus.on(FetchInboxEvent, fetch_from_gmail)
 # Return values are automatically validated as list[EmailMessage]
 emails = await event_bus.dispatch(FetchInboxEvent(account_id='124', ...)).event_result()
 ```
+
+**Supported Types:**
+- Built-in types: `str`, `int`, `float`, `bool`, `bytes`, `list`, `dict`, `set`, `tuple`
+- Generic types: `list[str]`, `dict[str, int]`, `Optional[str]`, etc.
+- Pydantic models: Any `BaseModel` subclass
+- Custom types: Any type that Pydantic can validate
 
 <br/>
 
@@ -551,7 +572,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     event_path: list[str]        # List of bus names traversed (auto-set)
     event_created_at: datetime   # When event was created, auto-generated
     event_results: dict[str, EventResult]   # Handler results
-    event_result_type: T_EventResultType    # Auto-detected from Generic parameter
+    event_result_type: type[T_EventResultType] | None  # Auto-detected from Generic[T] parameter
     
     # Data fields
     # ... subclass BaseEvent to add your own event data fields here ...
@@ -570,7 +591,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 - `event_completed_at`: `datetime` When all handlers completed processing
 - `event_children`: `list[BaseEvent]` Get any child events emitted during handling of this event
 - `event_bus`: `EventBus` Shortcut to get the bus currently processing this event
-- `event_result_type`: `type[Any] | None` Optional type/pydantic model to enforce for event handler return values
+- `event_result_type`: `type[Any] | None` Expected handler return type (auto-detected from `BaseEvent[T]` generic parameter)
 
 #### `BaseEvent` Methods
 

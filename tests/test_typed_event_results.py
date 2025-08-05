@@ -58,55 +58,27 @@ async def test_builtin_type_casting():
 
     bus = EventBus(name='builtin_test_bus')
 
-    print(f'DEBUG: StringEvent event_result_type = {StringEvent().event_result_type}')
-    print(f'DEBUG: IntEvent event_result_type = {IntEvent().event_result_type}')
-
     def string_handler(event: StringEvent):
-        print(f'DEBUG: string_handler called with {event}')
         return '42'  # Return a proper string
 
     def int_handler(event: IntEvent):
-        print(f'DEBUG: int_handler called with {event}')
         return 123  # Return a proper int
 
     bus.on('StringEvent', string_handler)
     bus.on('IntEvent', int_handler)
 
-    # Test string casting
-    print('DEBUG: Creating StringEvent')
+    # Test string validation
     string_event = StringEvent()
-    print(f'DEBUG: Dispatching StringEvent {string_event.event_id}')
-    dispatch_result = bus.dispatch(string_event)
-    print(f'DEBUG: dispatch returned {dispatch_result}')
-    print('DEBUG: Awaiting dispatch result')
-    await dispatch_result
-    print(f'DEBUG: dispatch complete, event status = {string_event.event_status}')
-    print(f'DEBUG: event_results = {string_event.event_results}')
-    print(f'DEBUG: event_completed_signal = {string_event.event_completed_signal}')
-
-    # Check what's in the event results
-    for handler_id, result in string_event.event_results.items():
-        print(f'DEBUG: handler {handler_id}: status={result.status}, result={result.result}, error={result.error}')
-
-    print('DEBUG: getting event_result')
-    try:
-        string_result = await string_event.event_result()
-        print(f'DEBUG: Got result: {string_result}')
-    except Exception as e:
-        print(f'DEBUG: Exception getting event_result: {type(e).__name__}: {e}')
-        raise
+    await bus.dispatch(string_event)
+    string_result = await string_event.event_result()
     assert isinstance(string_result, str)
     assert string_result == '42'
     print(f'✅ String "42" validated as str: "{string_result}"')
 
-    # Test int casting
-    print('DEBUG: Creating IntEvent')
+    # Test int validation
     int_event = IntEvent()
-    print(f'DEBUG: Dispatching IntEvent {int_event.event_id}')
     await bus.dispatch(int_event)
-    print('DEBUG: Getting int result')
     int_result = await int_event.event_result()
-    print(f'DEBUG: Got result: {int_result}')
     assert isinstance(int_result, int)
     assert int_result == 123
     print(f'✅ Int 123 validated as int: {int_result}')
