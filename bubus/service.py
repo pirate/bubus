@@ -732,8 +732,9 @@ class EventBus:
         if not self._is_running:
             return
 
-        # Wait for completion if timeout specified
-        if timeout:
+        # Wait for completion if timeout specified and > 0
+        # timeout=0 means "don't wait", so skip the wait entirely
+        if timeout is not None and timeout > 0:
             try:
                 await self.wait_until_idle(timeout=timeout)
             except TimeoutError:

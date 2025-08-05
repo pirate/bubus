@@ -4,7 +4,7 @@ import logging
 import os
 from collections.abc import Awaitable, Callable, Generator
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Protocol, Self, TypeAlias, cast, runtime_checkable
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Generic, Literal, Protocol, Self, TypeAlias, cast, runtime_checkable
 from uuid import UUID
 
 from pydantic import (
@@ -175,17 +175,24 @@ def _extract_basemodel_generic_arg(cls: type) -> Any:
     Needed because pydantic messes with the mro and obscures the Generic from the bases list.
     https://github.com/pydantic/pydantic/issues/8410
     """
+    # Direct check first for speed - most subclasses will have it directly
+    if hasattr(cls, '__pydantic_generic_metadata__'):
+        metadata: dict[str, Any] = cls.__pydantic_generic_metadata__  # type: ignore
+        origin = metadata.get('origin')  # type: ignore
+        args: tuple[Any, ...] = metadata.get('args')  # type: ignore
+        if origin is BaseEvent and args and len(args) > 0:  # type: ignore
+            return args[0]
 
-    # Look through MRO for a parameterized BaseEvent parent
-    for parent in cls.__mro__:
+    # Only check MRO if direct check failed
+    # Skip first element (cls itself) since we already checked it
+    for parent in cls.__mro__[1:]:
         if hasattr(parent, '__pydantic_generic_metadata__'):
-            metadata = getattr(parent, '__pydantic_generic_metadata__', {})
+            metadata = parent.__pydantic_generic_metadata__  # type: ignore
             # Check if this is a parameterized BaseEvent
-            origin = metadata.get('origin')
-            args = metadata.get('args')
-            if origin is BaseEvent and args and len(args) > 0:
-                result = args[0]
-                return result
+            origin = metadata.get('origin')  # type: ignore
+            args: tuple[Any, ...] = metadata.get('args')  # type: ignore
+            if origin is BaseEvent and args and len(args) > 0:  # type: ignore
+                return args[0]
 
     return None
 
@@ -202,6 +209,9 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         validate_default=True,
         revalidate_instances='always',
     )
+
+    # Class-level cache for auto-extracted event_result_type
+    _event_result_type_cache: ClassVar[Any | None] = None
 
     event_type: PythonIdentifierStr = Field(default='UndefinedEvent', description='Event type name', max_length=64)
     event_schema: str = Field(
@@ -344,42 +354,40 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 
     @model_validator(mode='before')
     @classmethod
-    def _set_event_result_type_from_generic_arg(cls, data: Any) -> Any:
+    def _set_event_result_type_from_generic_arg(cls, data: dict[str, Any]) -> dict[str, Any]:
         """Automatically set event_result_type from Generic type parameter if not explicitly provided."""
-        if not isinstance(data, dict):
+        if not isinstance(data, dict):  # type: ignore
             return data
 
-        # Check if event_result_type is explicitly set
-        has_explicit_result_type = False
+        # Fast path: if event_result_type is already in the data, skip all checks
+        if 'event_result_type' in data:
+            return data
 
-        # Check if it's in the input data
-        if 'event_result_type' in data and data['event_result_type'] is not None:
-            has_explicit_result_type = True
+        # Check if class explicitly defines event_result_type in model_fields
+        # This handles cases where user explicitly sets event_result_type in class definition
+        if 'event_result_type' in cls.model_fields:
+            field = cls.model_fields['event_result_type']
+            if field.default is not None and field.default != BaseEvent.model_fields['event_result_type'].default:
+                # Explicitly set, use the default value
+                data['event_result_type'] = field.default
+                return data
 
-        # Check if it's explicitly set in the class annotations or attributes
-        elif hasattr(cls, '__annotations__') and 'event_result_type' in cls.__annotations__:
-            has_explicit_result_type = True
-        elif hasattr(cls, 'event_result_type') and cls.event_result_type is not None:
-            # Check if it's different from the default BaseEvent value
-            try:
-                base_default = BaseEvent.model_fields['event_result_type'].default
-                if cls.event_result_type != base_default:
-                    has_explicit_result_type = True
-            except Exception:
-                has_explicit_result_type = True
+        # Fast path: check if class has cached the result type
+        if cls._event_result_type_cache is not None:
+            data['event_result_type'] = cls._event_result_type_cache
+            return data
 
-        # Only auto-set if not explicitly provided
-        if not has_explicit_result_type:
-            # Extract the generic type from BaseEvent[T]
-            # Note: We don't need frame inspection since pydantic has already resolved
-            # all types in the model_fields, including custom user types
-            extracted_type = _extract_basemodel_generic_arg(cls)
+        # Extract the generic type from BaseEvent[T]
+        extracted_type = _extract_basemodel_generic_arg(cls)
 
-            # Set the type if we successfully resolved it
-            if extracted_type is not None:
-                data['event_result_type'] = extracted_type
+        # Cache the result on the class
+        cls._event_result_type_cache = extracted_type
 
-        return cast(dict[str, Any], data)
+        # Set the type if we successfully resolved it
+        if extracted_type is not None:
+            data['event_result_type'] = extracted_type
+
+        return cast(dict[str, Any], data)  # type: ignore
 
     @property
     def event_completed_signal(self) -> asyncio.Event | None:

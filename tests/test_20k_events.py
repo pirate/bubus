@@ -16,6 +16,12 @@ def get_memory_usage_mb():
     return process.memory_info().rss / 1024 / 1024
 
 
+class SimpleEvent(BaseEvent):
+    """Simple event without Generic for performance testing"""
+
+    pass
+
+
 @pytest.mark.asyncio
 async def test_20k_events_with_memory_control():
     """Test processing 20k events with no memory leaks"""
@@ -35,11 +41,11 @@ async def test_20k_events_with_memory_control():
 
     processed_count = 0
 
-    async def handler(event: BaseEvent[None]) -> None:
+    async def handler(event: SimpleEvent) -> None:
         nonlocal processed_count
         processed_count += 1
 
-    bus.on('TestEvent', handler)
+    bus.on('SimpleEvent', handler)
 
     total_events = 20_000  # Reduced for faster tests
 
@@ -53,7 +59,7 @@ async def test_20k_events_with_memory_control():
 
     while dispatched < total_events:
         try:
-            event = bus.dispatch(BaseEvent(event_type='TestEvent'))
+            event = bus.dispatch(SimpleEvent())
             pending_events.append(event)
             dispatched += 1
             if dispatched <= 5:
@@ -132,10 +138,10 @@ async def test_hard_limit_enforcement():
 
     try:
         # Create a slow handler to keep events pending
-        async def slow_handler(event: BaseEvent[None]) -> None:
+        async def slow_handler(event: SimpleEvent) -> None:
             await asyncio.sleep(0.5)  # Reduced from 10s to 0.5s
 
-        bus.on('TestEvent', slow_handler)
+        bus.on('SimpleEvent', slow_handler)
 
         # Try to dispatch more than 100 events
         events_dispatched = 0
@@ -143,7 +149,7 @@ async def test_hard_limit_enforcement():
 
         for _ in range(150):
             try:
-                bus.dispatch(BaseEvent(event_type='TestEvent'))
+                bus.dispatch(SimpleEvent())
                 events_dispatched += 1
             except RuntimeError as e:
                 if 'EventBus at capacity' in str(e):
@@ -178,7 +184,7 @@ async def test_cleanup_prioritizes_pending():
         await asyncio.gather(*completed_events)
 
         # Add pending events with slow handler (reduced sleep time)
-        async def slow_handler(event: BaseEvent[None]) -> None:
+        async def slow_handler(event: BaseEvent) -> None:
             if event.event_type == 'SlowEvent':
                 await asyncio.sleep(0.5)  # Reduced from 10s to 0.5s
 
