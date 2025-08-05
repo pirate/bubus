@@ -357,7 +357,7 @@ bus.dispatch(SecondEventAbc(some_key="banana"))
 ...
 ```
 
-### 🎯 Typed Event Handler Return Values
+### 🎯 Event Handler Return Values
 
 There are two ways to get return values from event handlers:
 
@@ -371,6 +371,12 @@ event_bus.on(DoSomeMathEvent, do_some_math)
 print(await event_bus.dispatch(DoSomeMathEvent(a=100, b=120)).event_result())
 # 220
 ```
+
+You can use these helpers to interact with the results returned by handlers:
+- `BaseEvent.event_result()`
+- `BaseEvent.event_results_list()`, `BaseEvent.event_results_filtered()`
+- `BaseEvent.event_results_by_handler_id()`, `BaseEvent.event_results_by_handler_name()`
+- `BaseEvent.event_results_flat_list()`, `BaseEvent.event_results_flat_dict()`
 
 **2. Have the handler do the work, then dispatch another event containing the result value, which other code can expect:**
 
@@ -386,30 +392,28 @@ print(result_event.final_sum)
 # 220
 ```
 
-#### Typed Return Values with Auto-Detection
+#### Annotating Event Handler Return Value Types
 
-Bubus automatically detects and validates handler return types using the generic parameter in `BaseEvent[T]`. When you define an event like `BaseEvent[str]`, Bubus knows that handlers should return `str` values:
+Bubus supports optional strict typing for Event handler return values using a generic parameter passed to `BaseEvent[ReturnTypeHere]`.
+For example if you use `BaseEvent[str]`, bubus would enforce that all handler functions must return `str | None` at compile-time via IDE/`mypy`/`pyright`/`ty` type hints, and at runtime when each handler finishes.
 
 ```python
-class ScreenshotEvent(BaseEvent[bytes]):
-    url: str
-    width: int = 1440
-    height: int = 1990
+class ScreenshotEvent(BaseEvent[bytes]):  # BaseEvent[bytes] will enforce that handlers can only return bytes
+    width: int
+    height: int
 
 async def on_ScreenshotEvent(event: ScreenshotEvent) -> bytes:
-    return await ScreenshotHelper.screenshot_to_bytes(
-        event.url, 
-        {'width': event.width, 'height': event.height}
-    )
+    return b'someimagebytes...'  # ✅ IDE type-hints & runtime both enforce return type matches expected: bytes
+    return 123                   # ❌ will show mypy/pyright issue + raise TypeError if the wrong type is returned
 
 event_bus.on(ScreenshotEvent, on_ScreenshotEvent)
 
 # Handler return values are automatically validated against the bytes type
-screenshot = await event_bus.dispatch(ScreenshotEvent(url='https://example.com')).event_result()
-assert isinstance(screenshot, bytes)
+returned_bytes = await event_bus.dispatch(ScreenshotEvent(...)).event_result()
+assert isinstance(returned_bytes, bytes)
 ```
 
-**Important:** The validation uses Pydantic's `TypeAdapter`, which validates but does not coerce types. Handlers must return the exact type specified:
+**Important:** The validation uses Pydantic's `TypeAdapter`, which validates but does not coerce types. Handlers must return the exact type specified or `None`:
 
 ```python
 class StringEvent(BaseEvent[str]):
@@ -432,7 +436,7 @@ class EmailMessage(BaseModel):
     content_len: int
     email_from: str
 
-class FetchInboxEvent(BaseEvent[list[EmailMessage]]): # Auto-detects list[EmailMessage]
+class FetchInboxEvent(BaseEvent[list[EmailMessage]]):
     account_id: UUID
     auth_key: str
 
@@ -442,14 +446,8 @@ async def fetch_from_gmail(event: FetchInboxEvent) -> list[EmailMessage]:
 event_bus.on(FetchInboxEvent, fetch_from_gmail)
 
 # Return values are automatically validated as list[EmailMessage]
-emails = await event_bus.dispatch(FetchInboxEvent(account_id='124', ...)).event_result()
+email_list = await event_bus.dispatch(FetchInboxEvent(account_id='124', ...)).event_result()
 ```
-
-**Supported Types:**
-- Built-in types: `str`, `int`, `float`, `bool`, `bytes`, `list`, `dict`, `set`, `tuple`
-- Generic types: `list[str]`, `dict[str, int]`, `Optional[str]`, etc.
-- Pydantic models: Any `BaseModel` subclass
-- Custom types: Any type that Pydantic can validate
 
 <br/>
 
