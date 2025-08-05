@@ -81,16 +81,16 @@ Register both synchronous and asynchronous handlers for maximum flexibility:
 
 ```python
 # Async handler
-async def async_handler(event: BaseEvent):
+async def async_handler(event: SomeEvent) -> str:
     await asyncio.sleep(0.1)  # Simulate async work
     return "async result"
 
 # Sync handler
-def sync_handler(event: BaseEvent):
+def sync_handler(event: SomeEvent) -> str:
     return "sync result"
 
-bus.on('MyEvent', async_handler)
-bus.on('MyEvent', sync_handler)
+bus.on(SomeEvent, async_handler)
+bus.on(SomeEvent, sync_handler)
 ```
 
 Handlers can also be defined under classes for easier organization:
@@ -99,21 +99,21 @@ Handlers can also be defined under classes for easier organization:
 class SomeService:
     some_value = 'this works'
 
-    async def handlers_can_be_methods(self, event: BaseEvent):
+    async def handlers_can_be_methods(self, event: SomeEvent) -> str:
         return self.some_value
     
     @classmethod
-    async def handler_can_be_classmethods(cls, event: BaseEvent):
+    async def handler_can_be_classmethods(cls, event: SomeEvent) -> str:
         return cls.some_value
 
     @staticmethod
-    async def handlers_can_be_staticmethods(event: BaseEvent):
+    async def handlers_can_be_staticmethods(event: SomeEvent) -> str:
         return 'this works too'
 
 # All usage patterns behave the same:
-bus.on('MyEvent', SomeClass().handlers_can_be_methods)
-bus.on('MyEvent', SomeClass.handler_can_be_classmethods)
-bus.on('MyEvent', SomeClass.handlers_can_be_staticmethods)
+bus.on(SomeEvent, SomeClass().handlers_can_be_methods)
+bus.on(SomeEvent, SomeClass.handler_can_be_classmethods)
+bus.on(SomeEvent, SomeClass.handlers_can_be_staticmethods)
 ```
 
 <br/>
@@ -123,11 +123,11 @@ bus.on('MyEvent', SomeClass.handlers_can_be_staticmethods)
 Subscribe to events using multiple patterns:
 
 ```python
+# By event model class (recommended for best type hinting)
+bus.on(UserActionEvent, handler)
+
 # By event type string
 bus.on('UserActionEvent', handler)
-
-# By event model class
-bus.on(UserActionEvent, handler)
 
 # Wildcard - handle all events
 bus.on('*', universal_handler)
@@ -146,13 +146,13 @@ main_bus = EventBus(name='MainBus')
 auth_bus = EventBus(name='AuthBus')
 data_bus = EventBus(name='DataBus')
 
-# Forward events between buses
-main_bus.on('LoginEvent', auth_bus.dispatch)  # if main bus gets LoginEvent, will forward to AuthBus
+# Share all or specific events between buses
+main_bus.on('*', auth_bus.dispatch)  # if main bus gets LoginEvent, will forward to AuthBus
 auth_bus.on('*', data_bus.dispatch)  # auth bus will forward everything to DataBus
-data_bus.on('*', main_bus.dispatch)  # don't worry! infinite loops are automatically prevented
+data_bus.on('*', main_bus.dispatch)  # don't worry! event will only be processed once by each, no infinite loop occurs
 
 # Events flow through the hierarchy with tracking
-event = main_bus.dispatch(MyEvent())
+event = main_bus.dispatch(LoginEvent())
 await event
 print(event.event_path)  # ['MainBus', 'AuthBus', 'DataBus']  # list of buses that have already procssed the event
 ```
@@ -164,22 +164,23 @@ print(event.event_path)  # ['MainBus', 'AuthBus', 'DataBus']  # list of buses th
 Collect and aggregate results from multiple handlers:
 
 ```python
-async def load_user_config(event) -> dict[str, Any]:
+async def load_user_config(event: GetConfigEvent) -> dict[str, Any]:
     return {"debug": True, "port": 8080}
 
-async def load_system_config(event) -> dict[str, Any]:
+async def load_system_config(event: GetConfigEvent) -> dict[str, Any]:
     return {"debug": False, "timeout": 30}
 
-bus.on('GetConfig', load_user_config)
-bus.on('GetConfig', load_system_config)
+bus.on(GetConfigEvent, load_user_config)
+bus.on(GetConfigEvent, load_system_config)
 
 # Get a merger of all dict results
-event = await bus.dispatch(GetConfig())
+event = await bus.dispatch(GetConfigEvent())
 config = await event.event_results_flat_dict(raise_if_conflicts=False)
 # {'debug': False, 'port': 8080, 'timeout': 30}
 
 # Or get individual results
-results = await event.event_results()
+await event.event_results_by_handler_id()
+await event.event_results_list()
 ```
 
 <br/>
@@ -194,7 +195,7 @@ for i in range(10):
     bus.dispatch(ProcessTaskEvent(task_id=i))
 
 # Even with async handlers, order is preserved
-await bus.wait_until_idle()
+await bus.wait_until_idle(timeout=30.0)
 ```
 
 If a handler dispatches and awaits any child events during execution, those events will jump the FIFO queue and be processed immediately:
@@ -257,8 +258,12 @@ finally:
 
 ### ⛓️ Parallel Handler Execution
 
+> [!CAUTION]
+> **Not Recommended.** Only for advanced users willing to implement their own concurrency control.
+
 Enable parallel processing of handlers for better performance.  
-The tradeoff is slightly less deterministic ordering as handler execution order will not be guaranteed when run in parallel.
+The harsh tradeoff is less deterministic ordering as handler execution order will not be guaranteed when run in parallel. 
+(It's very hard to write non-flaky/reliable applications when handler execution order is not guaranteed.)
 
 ```python
 # Create bus with parallel handler execution
