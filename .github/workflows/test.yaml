@@ -69,12 +69,21 @@ jobs:
 
       - run: pytest -x tests/${{ matrix.test_filename }}.py --cov=bubus --cov-report=term
       
+      - name: Check coverage files
+        run: |
+          echo "Looking for coverage files..."
+          ls -la .coverage* 2>/dev/null || ls -la | grep coverage || echo "No coverage files found"
+          if [ -f .coverage ]; then
+            echo "Found .coverage file, size: $(stat -f%z .coverage 2>/dev/null || stat -c%s .coverage) bytes"
+          fi
+      
       - name: Upload coverage data
         uses: actions/upload-artifact@v4
         with:
           name: coverage-${{ matrix.test_filename }}
           path: .coverage
           retention-days: 7
+        if: always()
 
   coverage:
     needs: tests
