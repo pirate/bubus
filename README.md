@@ -979,6 +979,14 @@ uv run pytest tests/test_eventbus.py
 - https://github.com/AngusWG/simple-event-bus
 - https://www.joeltok.com/posts/2021-03-building-an-event-bus-in-python/
 
+---
+
+
+> [🧠 DeepWiki Docs](https://deepwiki.com/browser-use/bubus)  
+> <img width="400" alt="image" src="https://github.com/user-attachments/assets/cedb5a2e-0643-4240-9a3d-5f27cb8b5741" /><img width="400" alt="image" src="https://github.com/user-attachments/assets/3ee0ee8c-8322-449f-979b-5c99ba6bd960" />
+
+
+
 ## 🏛️ License
 
 This project is licensed under the MIT License. For more information, see the main browser-use repository: https://github.com/browser-use/browser-use
