@@ -253,6 +253,7 @@ class EventBus:
     handlers: dict[PythonIdStr, list[ContravariantEventHandler['BaseEvent[Any]']]]  # collected by .on(<event_type>, <handler>)
     event_queue: CleanShutdownQueue['BaseEvent[Any]'] | None
     event_history: dict[UUIDStr, 'BaseEvent[Any]']  # collected by .dispatch(<event>)
+    middlewares: list[Callable[[Callable[['BaseEvent[Any]'], Any]], Callable[['BaseEvent[Any]'], Any]]]
 
     _is_running: bool = False
     _runloop_task: asyncio.Task[None] | None = None
@@ -264,6 +265,7 @@ class EventBus:
         wal_path: Path | str | None = None,
         parallel_handlers: bool = False,
         max_history_size: int | None = 50,  # Keep only 50 events in history
+        middlewares: list[Callable[[Callable[['BaseEvent[Any]'], Any]], Callable[['BaseEvent[Any]'], Any]]] | None = None,
     ):
         self.id = uuid7str()
         self.name = name or f'{self.__class__.__name__}_{self.id[-8:]}'
@@ -317,6 +319,7 @@ class EventBus:
         self.parallel_handlers = parallel_handlers
         self.wal_path = Path(wal_path) if wal_path else None
         self._on_idle = None
+        self.middlewares = middlewares or []
 
         # Memory leak prevention settings
         self.max_history_size = max_history_size
@@ -948,8 +951,10 @@ class EventBus:
         # Execute handlers
         await self._execute_handlers(event, handlers=applicable_handlers, timeout=timeout)
 
-        await self._default_log_handler(event)
-        await self._default_wal_handler(event)
+        # Legacy WAL and logging - only if no middlewares are present
+        if not self.middlewares:
+            await self._default_log_handler(event)
+            await self._default_wal_handler(event)
 
         # Mark event as complete if all handlers are done
         event.event_mark_complete_if_all_handlers_completed()
@@ -1007,46 +1012,117 @@ class EventBus:
 
         return filtered_handlers
 
+    def _build_middleware_chain(self, event: 'BaseEvent[Any]') -> Callable[['BaseEvent[Any]'], Any]:
+        """Build the middleware chain for event processing"""
+        
+        async def execute_handlers_with_no_middleware(event: 'BaseEvent[Any]') -> Any:
+            """Final handler execution without middleware"""
+            applicable_handlers = self._get_applicable_handlers(event)
+            if not applicable_handlers:
+                # No handlers to execute - raise StopIteration so middleware can handle this case
+                raise StopIteration("No handlers found for event")
+
+            # Execute all handlers in parallel or serial based on parallel_handlers setting
+            if self.parallel_handlers:
+                handler_tasks: dict[PythonIdStr, tuple[asyncio.Task[Any], EventHandler]] = {}
+                # Copy the current context to ensure context vars are propagated
+                context = contextvars.copy_context()
+                for handler_id, handler in applicable_handlers.items():
+                    task = asyncio.create_task(
+                        self._execute_sync_or_async_handler(event, handler, timeout=event.event_timeout),
+                        name=f'{self}._execute_sync_or_async_handler({event}, {get_handler_name(handler)})',
+                        context=context,
+                    )
+                    handler_tasks[handler_id] = (task, handler)
+
+                # Wait for all handlers to complete
+                results = []
+                for handler_id, (task, handler) in handler_tasks.items():
+                    try:
+                        result = await task
+                        results.append(result)
+                    except Exception:
+                        # Error already logged and recorded in _execute_sync_or_async_handler
+                        pass
+                return results[0] if results else None
+            else:
+                # Execute handlers serially, wait until each one completes before moving on to the next
+                last_result = None
+                for handler_id, handler in applicable_handlers.items():
+                    try:
+                        result = await self._execute_sync_or_async_handler(event, handler, timeout=event.event_timeout)
+                        last_result = result
+                    except Exception as e:
+                        # Error already logged and recorded in _execute_sync_or_async_handler
+                        logger.debug(
+                            f'❌ {self} Handler {get_handler_name(handler)}#{str(id(handler))[-4:]}({event}) failed with {type(e).__name__}: {e}'
+                        )
+                        pass
+                return last_result
+        
+        # Start with the base handler execution
+        next_handler = execute_handlers_with_no_middleware
+        
+        # Build the middleware chain in reverse order (last middleware first)
+        for middleware_factory in reversed(self.middlewares):
+            next_handler = middleware_factory(next_handler)
+        
+        return next_handler
+
     async def _execute_handlers(
         self, event: 'BaseEvent[Any]', handlers: dict[PythonIdStr, EventHandler] | None = None, timeout: float | None = None
     ) -> None:
-        """Execute all handlers for an event in parallel"""
-        applicable_handlers = handlers if (handlers is not None) else self._get_applicable_handlers(event)
-        if not applicable_handlers:
-            event.event_mark_complete_if_all_handlers_completed()  # mark event completed immediately if it has no handlers
-            return
+        """Execute all handlers for an event, with middleware support"""
+        # If no middlewares, use the legacy path for efficiency
+        if not self.middlewares:
+            applicable_handlers = handlers if (handlers is not None) else self._get_applicable_handlers(event)
+            if not applicable_handlers:
+                event.event_mark_complete_if_all_handlers_completed()  # mark event completed immediately if it has no handlers
+                return
 
-        # Execute all handlers in parallel
-        if self.parallel_handlers:
-            handler_tasks: dict[PythonIdStr, tuple[asyncio.Task[Any], EventHandler]] = {}
-            # Copy the current context to ensure context vars are propagated
-            context = contextvars.copy_context()
-            for handler_id, handler in applicable_handlers.items():
-                task = asyncio.create_task(
-                    self._execute_sync_or_async_handler(event, handler, timeout=timeout),
-                    name=f'{self}._execute_sync_or_async_handler({event}, {get_handler_name(handler)})',
-                    context=context,
-                )
-                handler_tasks[handler_id] = (task, handler)
-
-            # Wait for all handlers to complete
-            for handler_id, (task, handler) in handler_tasks.items():
-                try:
-                    await task
-                except Exception:
-                    # Error already logged and recorded in _execute_sync_or_async_handler
-                    pass
-        else:
-            # otherwise, execute handlers serially, wait until each one completes before moving on to the next
-            for handler_id, handler in applicable_handlers.items():
-                try:
-                    await self._execute_sync_or_async_handler(event, handler, timeout=timeout)
-                except Exception as e:
-                    # Error already logged and recorded in _execute_sync_or_async_handler
-                    logger.debug(
-                        f'❌ {self} Handler {get_handler_name(handler)}#{str(id(handler))[-4:]}({event}) failed with {type(e).__name__}: {e}'
+            # Execute all handlers in parallel
+            if self.parallel_handlers:
+                handler_tasks: dict[PythonIdStr, tuple[asyncio.Task[Any], EventHandler]] = {}
+                # Copy the current context to ensure context vars are propagated
+                context = contextvars.copy_context()
+                for handler_id, handler in applicable_handlers.items():
+                    task = asyncio.create_task(
+                        self._execute_sync_or_async_handler(event, handler, timeout=timeout),
+                        name=f'{self}._execute_sync_or_async_handler({event}, {get_handler_name(handler)})',
+                        context=context,
                     )
-                    pass
+                    handler_tasks[handler_id] = (task, handler)
+
+                # Wait for all handlers to complete
+                for handler_id, (task, handler) in handler_tasks.items():
+                    try:
+                        await task
+                    except Exception:
+                        # Error already logged and recorded in _execute_sync_or_async_handler
+                        pass
+            else:
+                # otherwise, execute handlers serially, wait until each one completes before moving on to the next
+                for handler_id, handler in applicable_handlers.items():
+                    try:
+                        await self._execute_sync_or_async_handler(event, handler, timeout=timeout)
+                    except Exception as e:
+                        # Error already logged and recorded in _execute_sync_or_async_handler
+                        logger.debug(
+                            f'❌ {self} Handler {get_handler_name(handler)}#{str(id(handler))[-4:]}({event}) failed with {type(e).__name__}: {e}'
+                        )
+                        pass
+        else:
+            # Use middleware chain
+            middleware_chain = self._build_middleware_chain(event)
+            try:
+                await middleware_chain(event)
+            except StopIteration:
+                # No handlers found - mark event completed if it has no handlers
+                event.event_mark_complete_if_all_handlers_completed()
+            except Exception as e:
+                # Middleware or handler error - already logged
+                logger.debug(f'❌ {self} Middleware chain failed for {event}: {type(e).__name__}: {e}')
+                pass
 
     async def _execute_sync_or_async_handler(
         self, event: 'BaseEvent[T_EventResultType]', handler: EventHandler, timeout: float | None = None
