@@ -2,6 +2,7 @@ import asyncio
 import inspect
 import logging
 import os
+import traceback
 from collections.abc import Awaitable, Callable, Generator
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Generic, Literal, Protocol, Self, TypeAlias, cast, runtime_checkable
@@ -921,6 +922,33 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
         from bubus.logging import log_eventresult_tree
 
         log_eventresult_tree(self, indent, is_last, child_events_by_parent)
+
+
+# Example analytics event classes for middleware usage
+class HandlerStartedAnalyticsEvent(BaseEvent[None]):
+    """Analytics event dispatched when a handler starts execution"""
+    
+    event_id: str  # ID of the event being processed
+    started_at: datetime
+    event_bus_id: str
+    event_bus_name: str
+    handler_id: str
+    handler_name: str
+    handler_class: str
+
+
+class HandlerCompletedAnalyticsEvent(BaseEvent[None]):
+    """Analytics event dispatched when a handler completes execution"""
+    
+    event_id: str  # ID of the event being processed
+    completed_at: datetime
+    error: BaseException | None = None
+    traceback_info: str = ''
+    event_bus_id: str
+    event_bus_name: str
+    handler_id: str
+    handler_name: str
+    handler_class: str
 
 
 # Resolve forward references

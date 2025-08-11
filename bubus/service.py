@@ -2,10 +2,11 @@ import asyncio
 import contextvars
 import inspect
 import logging
+import traceback
 import warnings
 import weakref
 from collections import defaultdict, deque
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Literal, TypeVar, cast, overload
@@ -26,6 +27,8 @@ from bubus.models import (
     EventHandlerClassMethod,
     EventHandlerFunc,
     EventHandlerMethod,
+    HandlerStartedAnalyticsEvent,
+    HandlerCompletedAnalyticsEvent,
     PythonIdentifierStr,
     PythonIdStr,
     T_Event,
@@ -50,6 +53,10 @@ QueueEntryType = TypeVar('QueueEntryType', bound='BaseEvent[Any]')
 T_ExpectedEvent = TypeVar('T_ExpectedEvent', bound='BaseEvent[Any]')
 
 EventPatternType = PythonIdentifierStr | Literal['*'] | type['BaseEvent[Any]']
+
+# Middleware type: function that takes event_bus, handler, event, and next_handler callable
+# The middleware is responsible for calling next_handler() to continue the chain
+EventMiddleware = Callable[['EventBus', EventHandler, 'BaseEvent[Any]', Callable[[], Awaitable[Any]]], Awaitable[Any]]
 
 
 class CleanShutdownQueue(asyncio.Queue[QueueEntryType]):
@@ -264,6 +271,7 @@ class EventBus:
         wal_path: Path | str | None = None,
         parallel_handlers: bool = False,
         max_history_size: int | None = 50,  # Keep only 50 events in history
+        middlewares: list[EventMiddleware] | None = None,
     ):
         self.id = uuid7str()
         self.name = name or f'{self.__class__.__name__}_{self.id[-8:]}'
@@ -317,6 +325,7 @@ class EventBus:
         self.parallel_handlers = parallel_handlers
         self.wal_path = Path(wal_path) if wal_path else None
         self._on_idle = None
+        self.middlewares = middlewares or []
 
         # Memory leak prevention settings
         self.max_history_size = max_history_size
@@ -1023,8 +1032,8 @@ class EventBus:
             context = contextvars.copy_context()
             for handler_id, handler in applicable_handlers.items():
                 task = asyncio.create_task(
-                    self._execute_sync_or_async_handler(event, handler, timeout=timeout),
-                    name=f'{self}._execute_sync_or_async_handler({event}, {get_handler_name(handler)})',
+                    self._execute_handler_with_middlewares(event, handler, timeout=timeout),
+                    name=f'{self}._execute_handler_with_middlewares({event}, {get_handler_name(handler)})',
                     context=context,
                 )
                 handler_tasks[handler_id] = (task, handler)
@@ -1034,19 +1043,56 @@ class EventBus:
                 try:
                     await task
                 except Exception:
-                    # Error already logged and recorded in _execute_sync_or_async_handler
+                    # Error already logged and recorded in _execute_handler_with_middlewares
                     pass
         else:
             # otherwise, execute handlers serially, wait until each one completes before moving on to the next
             for handler_id, handler in applicable_handlers.items():
                 try:
-                    await self._execute_sync_or_async_handler(event, handler, timeout=timeout)
+                    await self._execute_handler_with_middlewares(event, handler, timeout=timeout)
                 except Exception as e:
-                    # Error already logged and recorded in _execute_sync_or_async_handler
+                    # Error already logged and recorded in _execute_handler_with_middlewares
                     logger.debug(
                         f'❌ {self} Handler {get_handler_name(handler)}#{str(id(handler))[-4:]}({event}) failed with {type(e).__name__}: {e}'
                     )
                     pass
+
+    async def _execute_handler_with_middlewares(
+        self, event: 'BaseEvent[T_EventResultType]', handler: EventHandler, timeout: float | None = None
+    ) -> Any:
+        """Execute a handler through the middleware chain"""
+        if not self.middlewares:
+            # No middlewares, execute handler directly
+            return await self._execute_sync_or_async_handler(event, handler, timeout)
+        
+        # Create middleware chain
+        handler_id = get_handler_id(handler, self)
+        
+        async def execute_with_middleware_chain(middleware_index: int = 0) -> Any:
+            if middleware_index >= len(self.middlewares):
+                # End of middleware chain, execute the actual handler
+                return await self._execute_sync_or_async_handler(event, handler, timeout)
+            
+            # Get current middleware
+            middleware = self.middlewares[middleware_index]
+            
+            # Create the "next" function for this middleware
+            async def next_handler() -> Any:
+                return await execute_with_middleware_chain(middleware_index + 1)
+            
+            # Execute middleware, passing the event bus, handler, event, and next function
+            try:
+                return await middleware(self, handler, event, next_handler)
+            except Exception as e:
+                # Log middleware error and re-raise
+                logger.exception(
+                    f'❌ {self} Error in middleware {middleware.__name__ if hasattr(middleware, "__name__") else str(middleware)} '
+                    f'for handler {get_handler_name(handler)}#{handler_id[-4:]}({event}) -> {type(e).__name__}({e})',
+                    exc_info=True,
+                )
+                raise
+        
+        return await execute_with_middleware_chain()
 
     async def _execute_sync_or_async_handler(
         self, event: 'BaseEvent[T_EventResultType]', handler: EventHandler, timeout: float | None = None
