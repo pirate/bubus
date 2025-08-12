@@ -101,7 +101,7 @@ async def test_casting_failure_handling():
 
     # The event should complete but the result should be an error
     try:
-        await event.event_results_by_handler_id(raise_if_any=False)
+        await event.event_results_by_handler_id(raise_if_any_fail=False)
         handler_id = list(event.event_results.keys())[0]
         event_result = event.event_results[handler_id]
     except Exception:

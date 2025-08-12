@@ -606,29 +606,36 @@ raw_result_values = [(await event_result) for event_result in completed_event.ev
 # equivalent to: completed_event.event_results_list()  (see below)
 ```
 
-##### `event_result(timeout: float | None=None, include: EventResultFilter=None, raise_if_any: bool=True, raise_if_none: bool=True) -> Any`
+##### `event_result(timeout: float | None=None, include: EventResultFilter=None, raise_if_unhandled: bool=True, raise_if_any_fail: bool=True, raise_if_all_none: bool=True) -> Any`
 
 Utility method helper to execute all the handlers and return the first handler's raw result value.
 
 **Parameters:**
 
 - `timeout`: Maximum time to wait for handlers to complete (None = use default event timeout)
-- `include`: Filter function to include only specific results (default: only non-None, non-exception results)
-- `raise_if_any`: If `True`, raise exception if any handler raises any `Exception` (`default: True`)
-- `raise_if_none`: If `True`, raise exception if results are empty / all results are `None` or `Exception` (`default: True`)
+- `include`: Filter function to include only specific results (default: only non-`None`, non-`Exception` results)
+- `raise_if_unhandled`: If `True`, raise exception if no handlers were subscribed to handle this event (`default: True`)
+- `raise_if_any_fail`: If `True`, raise exception if any handler raises any `Exception` (`default: True`)
+- `raise_if_all_none`: If `True`, raise exception if all results are `None` (`default: True`)
+- ~~*`raise_if_multiple`: If `True`, raise an exception if multiple handlers return non-`None` results (`default: False`, execute all but return only the first result silenlty ignoring the rest)*~~ **Let us know if you need this**
 
 ```python
 # by default it returns the first successful non-None result value
 result = await event.event_result()
 
-# Get result from first handler that returns a string
-valid_result = await event.event_result(include=lambda r: isinstance(r.result, str) and len(r.result) > 100)
+# Execute all handlers and return only the first 'completed' result that's a > 100 chars-long str
+long_enough_result = await event.event_result(include=lambda r: r.status == 'completed' and len(r.result) > 100, raise_if)
 
-# Get result but don't raise exceptions or error for 0 results, just return None
-result_or_none = await event.event_result(raise_if_any=False, raise_if_none=False)
+# Execute all handlers and return only the first error result that matches a certain string
+closed_error_result = await event.event_result(include=lambda r: r.status == 'error' and 'page closed' in r.error, raise_if_any_fail=False)
+
+# Get result but don't raise exceptions for any handler problems, just return None
+ignored_event = event_bus.dispatch(SomeEventThatNoHandlersAreListeningFor())
+result_or_none = await ignored_event.event_result(raise_if_unhandled=False, raise_if_any_fail=False, raise_if_all_none=False)
+# None
 ```
 
-##### `event_results_by_handler_id(timeout: float | None=None, include: EventResultFilter=None, raise_if_any: bool=True, raise_if_none: bool=True) -> dict`
+##### `event_results_by_handler_id(timeout: float | None=None, include: EventResultFilter=None, raise_if_any_fail: bool=True, raise_if_all_none: bool=True) -> dict`
 
 Utility method helper to get all raw result values organized by `{handler_id: result_value}`.
 
@@ -636,8 +643,9 @@ Utility method helper to get all raw result values organized by `{handler_id: re
 
 - `timeout`: Maximum time to wait for handlers to complete (None = use default event timeout)
 - `include`: Filter function to include only specific results (default: only non-None, non-exception results)
-- `raise_if_any`: If `True`, raise exception if any handler raises any `Exception` (`default: True`)
-- `raise_if_none`: If `True`, raise exception if results are empty / all results are `None` or `Exception` (`default: True`)
+- `raise_if_unahndled`: If `True`, raise exception if no handlers were subscribed to handle this event (`default: True`)
+- `raise_if_any_fail`: If `True`, raise exception if any handler raises any `Exception` (`default: True`)
+- `raise_if_all_none`: If `True`, raise exception if results are empty / all results are `None` or `Exception` (`default: True`)
 
 ```python
 # by default it returns all successful non-None result values
@@ -648,10 +656,10 @@ results = await event.event_results_by_handler_id()
 int_results = await event.event_results_by_handler_id(include=lambda r: isinstance(r.result, int))
 
 # Get all results including errors and None values
-all_results = await event.event_results_by_handler_id(raise_if_any=False, raise_if_none=False)
+all_results = await event.event_results_by_handler_id(raise_if_any_fail=False, raise_if_all_none=False)
 ```
 
-##### `event_results_list(timeout: float | None=None, include: EventResultFilter=None, raise_if_any: bool=True, raise_if_none: bool=True) -> list[Any]`
+##### `event_results_list(timeout: float | None=None, include: EventResultFilter=None, raise_if_unhandled: bool=True, raise_if_any_fail: bool=True, raise_if_all_none: bool=True) -> list[Any]`
 
 Utility method helper to get all raw result values in a list.
 
@@ -659,8 +667,9 @@ Utility method helper to get all raw result values in a list.
 
 - `timeout`: Maximum time to wait for handlers to complete (None = use default event timeout)
 - `include`: Filter function to include only specific results (default: only non-None, non-exception results)
-- `raise_if_any`: If `True`, raise exception if any handler raises any `Exception` (`default: True`)
-- `raise_if_none`: If `True`, raise exception if results are empty / all results are `None` or `Exception` (`default: True`)
+- `raise_if_unahndled`: If `True`, raise exception if no handlers were subscribed to handle this event (`default: True`)
+- `raise_if_any_fail`: If `True`, raise exception if any handler raises any `Exception` (`default: True`)
+- `raise_if_all_none`: If `True`, raise exception if results are empty / all results are `None` or `Exception` (`default: True`)
 
 ```python
 # by default it returns all successful non-None result values
@@ -671,10 +680,10 @@ results = await event.event_results_list()
 filtered_results = await event.event_results_list(include=lambda r: isinstance(r.result, str) and len(r.result) > 10)
 
 # Get all results without raising on errors
-all_results = await event.event_results_list(raise_if_any=False, raise_if_none=False)
+all_results = await event.event_results_list(raise_if_any_fail=False, raise_if_all_none=False)
 ```
 
-##### `event_results_flat_dict(timeout: float | None=None, include: EventResultFilter=None, raise_if_any: bool=True, raise_if_none: bool=False, raise_if_conflicts: bool=True) -> dict`
+##### `event_results_flat_dict(timeout: float | None=None, include: EventResultFilter=None, raise_if_unhandled: bool=True, raise_if_any_fail: bool=True, raise_if_all_none: bool=False, raise_if_conflicts: bool=True) -> dict`
 
 Utility method helper to merge all raw result values that are `dict`s into a single flat `dict`.
 
@@ -682,8 +691,9 @@ Utility method helper to merge all raw result values that are `dict`s into a sin
 
 - `timeout`: Maximum time to wait for handlers to complete (None = use default event timeout)
 - `include`: Filter function to include only specific results (default: only non-None, non-exception results)
-- `raise_if_any`: If `True`, raise exception if any handler raises any `Exception` (`default: True`)
-- `raise_if_none`: If `True`, raise exception if results are empty / all results are `None` or `Exception` (`default: False`)
+- `raise_if_unahndled`: If `True`, raise exception if no handlers were subscribed to handle this event (`default: True`)
+- `raise_if_any_fail`: If `True`, raise exception if any handler raises any `Exception` (`default: True`)
+- `raise_if_all_none`: If `True`, raise exception if results are empty / all results are `None` or `Exception` (`default: False`)
 - `raise_if_conflicts`: If `True`, raise exception if dict keys conflict between handlers (`default: True`)
 
 ```python
@@ -698,7 +708,7 @@ config_dicts = await event.event_results_flat_dict(include=lambda r: isinstance(
 merged = await event.event_results_flat_dict(raise_if_conflicts=False)
 ```
 
-##### `event_results_flat_list(timeout: float | None=None, include: EventResultFilter=None, raise_if_any: bool=True, raise_if_none: bool=True) -> list`
+##### `event_results_flat_list(timeout: float | None=None, include: EventResultFilter=None, raise_if_any_fail: bool=True, raise_if_all_none: bool=True) -> list`
 
 Utility method helper to merge all raw result values that are `list`s into a single flat `list`.
 
@@ -706,8 +716,9 @@ Utility method helper to merge all raw result values that are `list`s into a sin
 
 - `timeout`: Maximum time to wait for handlers to complete (None = use default event timeout)
 - `include`: Filter function to include only specific results (default: only non-None, non-exception results)
-- `raise_if_any`: If `True`, raise exception if any handler raises any `Exception` (`default: True`)
-- `raise_if_none`: If `True`, raise exception if results are empty / all results are `None` or `Exception` (`default: True`)
+- `raise_if_unahndled`: If `True`, raise exception if no handlers were subscribed to handle this event (`default: True`)
+- `raise_if_any_fail`: If `True`, raise exception if any handler raises any `Exception` (`default: True`)
+- `raise_if_all_none`: If `True`, raise exception if results are empty / all results are `None` or `Exception` (`default: True`)
 
 ```python
 # by default it merges all successful list results
@@ -718,7 +729,7 @@ results = await event.event_results_flat_list()
 long_lists = await event.event_results_flat_list(include=lambda r: isinstance(r.result, list) and len(r.result) > 2)
 
 # Get all list results without raising on errors
-all_items = await event.event_results_flat_list(raise_if_any=False, raise_if_none=False)
+all_items = await event.event_results_flat_list(raise_if_any_fail=False, raise_if_all_none=False)
 ```
 
 ##### `event_bus` (property)

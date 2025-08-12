@@ -1368,7 +1368,7 @@ class TestEventResults:
         eventbus.on('GetSingle', single_value)
         event_single = await eventbus.dispatch(BaseEvent(event_type='GetSingle'))
 
-        result = await event_single.event_results_flat_list(raise_if_none=False)
+        result = await event_single.event_results_flat_list(raise_if_any_fail=True, raise_if_all_none=False)
         assert 'single' not in result  # Single values should be skipped, as they are not lists
         assert len(result) == 0
 
@@ -1664,8 +1664,8 @@ class TestComplexIntegration:
                 assert 'did not match expected event_result_type' in error_msg
                 assert 'dict' in error_msg
 
-            # event_results_flat_dict should still work when raise_if_any=False, only including valid dict results
-            dict_result = await event.event_results_flat_dict(raise_if_any=False)
+            # event_results_flat_dict should still work when raise_if_any_fail=False, only including valid dict results
+            dict_result = await event.event_results_flat_dict(raise_if_any_fail=False, raise_if_all_none=True)
             assert 'key1' in dict_result and 'key2' in dict_result
             assert len(dict_result) == 2  # Only the two dict results
 
@@ -1727,8 +1727,8 @@ class TestComplexIntegration:
                 assert 'did not match expected event_result_type' in error_msg
                 assert 'list' in error_msg
 
-            # event_results_flat_list should still work when raise_if_any=False, only including valid list results
-            list_result = await event.event_results_flat_list(raise_if_any=False)
+            # event_results_flat_list should still work when raise_if_any_fail=False, only including valid list results
+            list_result = await event.event_results_flat_list(raise_if_any_fail=False)
             assert list_result == [1, 2, 3, 'a', 'b', 'c']  # Flattened from both list handlers
 
         finally:

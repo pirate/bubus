@@ -439,25 +439,24 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         return max(completed_times) if completed_times else self.event_processed_at
 
     @staticmethod
-    def _event_result_is_truthy(event_result: 'EventResult[T_EventResultType]') -> bool:
+    def _event_handler_completed(event_result: 'EventResult[T_EventResultType]') -> bool:
         if event_result.status != 'completed':
-            return False
-        if event_result.result is None:
             return False
         if isinstance(event_result.result, BaseException) or event_result.error:
             return False
         if isinstance(
             event_result.result, BaseEvent
-        ):  # omit if result is a BaseEvent, it's a forwarded event not an actual return value
+        ):  # omit if result is a BaseEvent, it's a forwarded event not an actual return value, we only want to include actual return values from final leaf handlers
             return False
         return True
 
     async def event_results_filtered(
         self,
         timeout: float | None = None,
-        include: EventResultFilter = _event_result_is_truthy,
-        raise_if_any: bool = True,
-        raise_if_none: bool = True,
+        include: EventResultFilter = _event_handler_completed,
+        raise_if_unhandled: bool = True,   # raise an exception if no handlers were subscribed to process this event
+        raise_if_any_fail: bool = True,    # re-raise first exception from any failed handlers at the end of processing
+        raise_if_all_none: bool = False,   # raise an exception if all handlers returned None (not recommended, returning None is a typical success case!)
     ) -> 'dict[PythonIdStr, EventResult[T_EventResultType]]':
         """Get all results filtered by the include function"""
 
@@ -476,8 +475,9 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         event_results: dict[PythonIdStr, EventResult[T_EventResultType]] = {
             handler_key: event_result for handler_key, event_result in self.event_results.items()
         }
-        included_results: dict[PythonIdStr, EventResult[T_EventResultType]] = {
-            handler_key: event_result for handler_key, event_result in event_results.items() if include(event_result)
+        completed_results: dict[PythonIdStr, EventResult[T_EventResultType]] = {
+            handler_key: event_result for handler_key, event_result in event_results.items()
+            if include(event_result)
         }
         error_results: dict[PythonIdStr, EventResult[T_EventResultType]] = {
             handler_key: event_result
@@ -485,19 +485,22 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             if event_result.error or isinstance(event_result.result, BaseException)
         }
 
-        if raise_if_any and error_results:
+        if raise_if_unhandled and not completed_results:
+            raise Exception(f'No handlers were subscribed to process this event: {self}')
+
+        if raise_if_any_fail and error_results:
             failing_handler, failing_result = list(error_results.items())[0]  # throw first error
             raise Exception(
                 f'Event handler {failing_handler}({self}) returned an error -> {failing_result.error or cast(Any, failing_result.result)}'
             )
 
-        if raise_if_none and not included_results:
+        if raise_if_all_none and completed_results and all(result.result is None for result in completed_results.values()):
             raise Exception(
                 f'Expected at least one handler to return a non-None result, but none did! {self} -> {self.event_results}'
             )
 
         event_results_by_handler_id: dict[PythonIdStr, EventResult[T_EventResultType]] = {
-            handler_key: result for handler_key, result in included_results.items()
+            handler_key: result for handler_key, result in completed_results.items()
         }
         for event_result in event_results_by_handler_id.values():
             assert event_result.result is not None, f'EventResult {event_result} has no result'
@@ -507,81 +510,81 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     async def event_results_by_handler_id(
         self,
         timeout: float | None = None,
-        include: EventResultFilter = _event_result_is_truthy,
-        raise_if_any: bool = True,
-        raise_if_none: bool = True,
+        include: EventResultFilter = _event_handler_completed,
+        raise_if_any_fail: bool = True,
+        raise_if_all_none: bool = False,
     ) -> dict[PythonIdStr, T_EventResultType | None]:
         """Get all raw result values organized by handler id {handler1_id: handler1_result, handler2_id: handler2_result, ...}"""
-        included_results = await self.event_results_filtered(
-            timeout=timeout, include=include, raise_if_any=raise_if_any, raise_if_none=raise_if_none
+        completed_results = await self.event_results_filtered(
+            timeout=timeout, include=include, raise_if_any_fail=raise_if_any_fail, raise_if_all_none=raise_if_all_none
         )
         return {
             handler_id: cast(T_EventResultType | None, event_result.result)
-            for handler_id, event_result in included_results.items()
+            for handler_id, event_result in completed_results.items()
         }
 
     async def event_results_by_handler_name(
         self,
         timeout: float | None = None,
-        include: EventResultFilter = _event_result_is_truthy,
-        raise_if_any: bool = True,
-        raise_if_none: bool = True,
+        include: EventResultFilter = _event_handler_completed,
+        raise_if_any_fail: bool = True,
+        raise_if_all_none: bool = False,
     ) -> dict[PythonIdentifierStr, T_EventResultType | None]:
         """Get all raw result values organized by handler name {handler1_name: handler1_result, handler2_name: handler2_result, ...}"""
-        included_results = await self.event_results_filtered(
-            timeout=timeout, include=include, raise_if_any=raise_if_any, raise_if_none=raise_if_none
+        completed_results = await self.event_results_filtered(
+            timeout=timeout, include=include, raise_if_any_fail=raise_if_any_fail, raise_if_all_none=raise_if_all_none
         )
         return {
             event_result.handler_name: cast(T_EventResultType | None, event_result.result)
-            for event_result in included_results.values()
+            for event_result in completed_results.values()
         }
 
     async def event_result(
         self,
         timeout: float | None = None,
-        include: EventResultFilter = _event_result_is_truthy,
-        raise_if_any: bool = True,
-        raise_if_none: bool = True,
+        include: EventResultFilter = _event_handler_completed,
+        raise_if_any_fail: bool = True,
+        raise_if_all_none: bool = True,
     ) -> T_EventResultType | None:
         """Get the first non-None result from the event handlers"""
-        valid_results = await self.event_results_filtered(
-            timeout=timeout, include=include, raise_if_any=raise_if_any, raise_if_none=raise_if_none
+        completed_results = await self.event_results_filtered(
+            timeout=timeout, include=include, raise_if_any_fail=raise_if_any_fail, raise_if_all_none=raise_if_all_none
         )
-        results = list(valid_results.values())
+        results = list(completed_results.values())
         return cast(T_EventResultType | None, results[0].result) if results else None
 
     async def event_results_list(
         self,
         timeout: float | None = None,
-        include: EventResultFilter = _event_result_is_truthy,
-        raise_if_any: bool = True,
-        raise_if_none: bool = True,
+        include: EventResultFilter = _event_handler_completed,
+        raise_if_any_fail: bool = True,
+        raise_if_all_none: bool = True,
     ) -> list[T_EventResultType | None]:
         """Get all result values in a list [handler1_result, handler2_result, ...]"""
-        valid_results = await self.event_results_filtered(
-            timeout=timeout, include=include, raise_if_any=raise_if_any, raise_if_none=raise_if_none
+        completed_results = await self.event_results_filtered(
+            timeout=timeout, include=include, raise_if_any_fail=raise_if_any_fail, raise_if_all_none=raise_if_all_none
         )
-        return [cast(T_EventResultType | None, event_result.result) for event_result in valid_results.values()]
+        return [cast(T_EventResultType | None, event_result.result) for event_result in completed_results.values()]
 
     async def event_results_flat_dict(
         self,
         timeout: float | None = None,
-        include: EventResultFilter = _event_result_is_truthy,
-        raise_if_any: bool = True,
-        raise_if_none: bool = False,
+        include: EventResultFilter = _event_handler_completed,
+        raise_if_any_fail: bool = True,
+        raise_if_all_none: bool = False,
         raise_if_conflicts: bool = True,
     ) -> dict[str, Any]:
         """Assuming all handlers return dicts, merge all the returned dicts into a single flat dict {**handler1_result, **handler2_result, ...}"""
 
-        valid_results = await self.event_results_filtered(
+        completed_results = await self.event_results_filtered(
             timeout=timeout,
             include=lambda event_result: isinstance(event_result.result, dict) and include(event_result),
-            raise_if_any=raise_if_any,
-            raise_if_none=raise_if_none,
+            raise_if_any_fail=raise_if_any_fail,
+            raise_if_all_none=raise_if_all_none,
         )
 
         merged_results: dict[str, Any] = {}
-        for event_result in valid_results.values():
+        for event_result in completed_results.values():
             if not event_result.result:
                 continue
 
@@ -600,19 +603,19 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     async def event_results_flat_list(
         self,
         timeout: float | None = None,
-        include: EventResultFilter = _event_result_is_truthy,
-        raise_if_any: bool = True,
-        raise_if_none: bool = True,
+        include: EventResultFilter = _event_handler_completed,
+        raise_if_any_fail: bool = True,
+        raise_if_all_none: bool = True,
     ) -> list[Any]:
         """Assuming all handlers return lists, merge all the returned lists into a single flat list [*handler1_result, *handler2_result, ...]"""
-        valid_results = await self.event_results_filtered(
+        completed_results = await self.event_results_filtered(
             timeout=timeout,
             include=lambda event_result: isinstance(event_result.result, list) and include(event_result),
-            raise_if_any=raise_if_any,
-            raise_if_none=raise_if_none,
+            raise_if_any_fail=raise_if_any_fail,
+            raise_if_all_none=raise_if_all_none,
         )
         merged_results: list[T_EventResultType | None] = []
-        for event_result in valid_results.values():
+        for event_result in completed_results.values():
             merged_results.extend(
                 cast(list[T_EventResultType | None], event_result.result)
             )  # append the contents of the list to the merged list

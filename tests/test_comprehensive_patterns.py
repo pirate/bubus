@@ -68,7 +68,7 @@ async def test_comprehensive_patterns():
         print('\n3. Checking forwarded handler results...')
         print(f'   child_event_sync.event_results: {child_event_sync.event_results}')
         print(f'   child_event_sync.event_result_type: {child_event_sync.event_result_type}')
-        event_results = await child_event_sync.event_results_list(raise_if_none=False)
+        event_results = await child_event_sync.event_results_list(raise_if_all_none=False)
         print(f'   Results: {event_results}')
         # The forwarding handler (bus.dispatch) returns the event object itself
         # We need to check if the child event was processed on bus2
