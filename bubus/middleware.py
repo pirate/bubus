@@ -1,6 +1,7 @@
 """Middleware system for event bus with Django-style nested function pattern."""
 
 import asyncio
+import traceback
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -107,15 +108,68 @@ class AnalyticsEventBusMiddleware(EventBusMiddleware):
     
     def __call__(self, get_handler_result: Callable[['BaseEvent[Any]'], Awaitable[Any]]) -> Callable[['BaseEvent[Any]'], Awaitable[Any]]:
         async def get_handler_result_wrapped_by_middleware(event: BaseEvent[Any]) -> Any:
-            # Note: We can't easily access the handler and event_bus from this middleware pattern
-            # This would need to be refactored to work with the Django pattern
-            # For now, this is a placeholder implementation
+            # Access event bus and handler info from the event context
+            from bubus.models import get_handler_id, get_handler_name
+            from bubus.service import _current_handler_id_context, inside_handler_context
+            
+            # We can access the event bus through event.event_bus
+            event_bus = event.event_bus
+            
+            # Get handler information from context 
+            handler_id = _current_handler_id_context.get()
+            
+            # Get the event result object which contains handler information
+            event_result = None
+            if handler_id and handler_id in event.event_results:
+                event_result = event.event_results[handler_id]
+            
+            # Dispatch started analytics event if we have the context
+            if event_result and inside_handler_context.get():
+                started_event = HandlerStartedAnalyticsEvent(
+                    event_id=event.event_id,
+                    started_at=event_result.started_at or datetime.now(UTC),
+                    event_bus_id=event_bus.id,
+                    event_bus_name=event_bus.name,
+                    handler_id=handler_id,
+                    handler_name=event_result.handler_name,
+                    handler_class=event_result.handler_class,
+                )
+                self.analytics_bus.dispatch(started_event)
             
             try:
                 result = await get_handler_result(event)
+                
+                # Dispatch completed analytics event
+                if event_result and inside_handler_context.get():
+                    completed_event = HandlerCompletedAnalyticsEvent(
+                        event_id=event.event_id,
+                        completed_at=datetime.now(UTC),
+                        error=None,
+                        traceback_info='',
+                        event_bus_id=event_bus.id,
+                        event_bus_name=event_bus.name,
+                        handler_id=handler_id,
+                        handler_name=event_result.handler_name,
+                        handler_class=event_result.handler_class,
+                    )
+                    self.analytics_bus.dispatch(completed_event)
+                
                 return result
             except Exception as e:
-                # Could dispatch analytics events here if we had access to handler info
+                # Dispatch completed analytics event with error
+                if event_result and inside_handler_context.get():
+                    completed_event = HandlerCompletedAnalyticsEvent(
+                        event_id=event.event_id,
+                        completed_at=datetime.now(UTC),
+                        error=e,
+                        traceback_info=traceback.format_exc(),
+                        event_bus_id=event_bus.id,
+                        event_bus_name=event_bus.name,
+                        handler_id=handler_id,
+                        handler_name=event_result.handler_name,
+                        handler_class=event_result.handler_class,
+                    )
+                    self.analytics_bus.dispatch(completed_event)
                 raise
         
         return get_handler_result_wrapped_by_middleware
