@@ -341,6 +341,11 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
                 # Not in handler context - wait for the event to complete normally
                 await self.event_completed_signal.wait()
 
+            # Check if any handlers had errors and raise the first one
+            for result in self.event_results.values():
+                if result.error:
+                    raise result.error
+
             # Return the completed event without raising errors
             # Errors should only be raised when explicitly requested via event_result() methods
             return self
