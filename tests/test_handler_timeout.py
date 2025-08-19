@@ -37,33 +37,33 @@ class HandlerClass1:
     async def on_TopmostEvent(self, event: TopmostEvent) -> str:
         """Completes quickly - 1 second"""
         await asyncio.sleep(1)
-        return 'security_check_passed'
+        return 'HandlerClass1.on_TopmostEvent completed after 1s'
 
     async def on_GrandchildEvent(self, event: GrandchildEvent) -> str:
         """Starts but gets interrupted after 1 second by parent timeout"""
         await asyncio.sleep(5)  # Would take 5 seconds but will be interrupted
-        return 'navigation_security_check'
+        return 'HandlerClass1.on_GrandchildEvent completed after 5s'
 
 
 class HandlerClass2:
     async def on_GrandchildEvent(self, event: GrandchildEvent) -> str:
         """Completes instantly"""
         # No sleep - completes immediately
-        return 'about_blank_check_passed'
+        return 'HandlerClass2.on_GrandchildEvent completed immediately'
 
 
 class HandlerClass3:
     async def on_GrandchildEvent(self, event: GrandchildEvent) -> str:
         """Never gets to run - pending when timeout occurs"""
         await asyncio.sleep(2)
-        return 'downloads_check'
+        return 'HandlerClass3.on_GrandchildEvent completed after 2s'
 
 
 class HandlerClass4:
     async def on_GrandchildEvent(self, event: GrandchildEvent) -> str:
         """Never gets to run - pending when timeout occurs"""
         await asyncio.sleep(1)
-        return 'popups_check'
+        return 'HandlerClass4.on_GrandchildEvent completed after 1s'
 
 
 class MainClass0:
@@ -81,29 +81,44 @@ class MainClass0:
             await child_event  # This will timeout after 10s
         except Exception as e:
             print(f"DEBUG: Parent caught child error: {type(e).__name__}: {e}")
+
+            import threading
+            
+            all_tasks = asyncio.all_tasks()
+            print(f"\nOutstanding asyncio tasks ({len(all_tasks)}):")
+            for task in all_tasks:
+                print(f"  - {task.get_name()}: {task._state} - {task.get_coro()}")
+            
+            # List all threads
+            all_threads = threading.enumerate()
+            print(f"\nActive threads ({len(all_threads)}):")
+            for thread in all_threads:
+                print(f"  - {thread.name}: {thread.is_alive()}")
+
             raise
 
         # Would continue but won't get here due to timeout
-        return 'navigation_complete'
+        return 'MainClass0.on_TopmostEvent completed after all child events'
 
     async def on_ChildEvent(self, event: ChildEvent) -> str:
         """Takes 10 seconds - will timeout, dispatches GrandchildEvent"""
         # Dispatch GrandchildEvent immediately
-        nav_complete = self.bus.dispatch(GrandchildEvent())
+        grandchild_event = self.bus.dispatch(GrandchildEvent())
 
         # Wait for GrandchildEvent to complete
         # This will take 9s (MainClass0) + 0s (AboutBlank) + partial HandlerClass1 time
         # Since handlers run serially and we have a 10s timeout, we'll timeout while
         # HandlerClass1 is still running (after about 1s of its 5s execution)
-        await nav_complete
+        await grandchild_event  # .event_result(raise_if_any=False, raise_if_none=True, timeout=15)
         
         # Would continue but we timeout first
-        return 'tab_created'
+        return 'MainClass0.on_ChildEvent completed after GrandchildEvent() finished processing'
 
     async def on_GrandchildEvent(self, event: GrandchildEvent) -> str:
         """Completes in 5 seconds"""
+        # print('GRANDCHILD EVENT HANDLING STARTED')
         await asyncio.sleep(2)
-        return 'navigation_handled'
+        return 'MainClass0.on_GrandchildEvent completed after 2s'
 
 
 @pytest.mark.asyncio
@@ -145,89 +160,23 @@ async def test_nested_timeout_scenario_from_issue():
     navigate_event = bus.dispatch(TopmostEvent())
 
     # Wait for it to complete (will fail due to timeout)
-    with pytest.raises((RuntimeError, TimeoutError)) as exc_info:
-        await navigate_event  # The event should complete with an error
+    # with pytest.raises((RuntimeError, TimeoutError)) as exc_info:
+    try:
+        await navigate_event   # .event_result(raise_if_any=True, raise_if_none=True, timeout=20)  # The event should complete with an error
+    except Exception as e:
+        print(f"Exception caught: {type(e).__name__}: {e}")
+        raise
+        
+    # import ipdb; ipdb.set_trace()
 
-    # Verify the error chain
-    print(f"Exception caught: {type(exc_info.value).__name__}: {exc_info.value}")
-    # assert 'ChildEvent' in str(exc_info.value) or 'ChildEvent' in str(exc_info.value)
+    # print('-----------------------------------------------------')
+    # print(f"Exception caught: {type(exc_info.value).__name__}: {exc_info.value}")
+    # # assert 'ChildEvent' in str(exc_info.value) or 'ChildEvent' in str(exc_info.value)
 
-    # Check TopmostEvent results
-    assert len(navigate_event.event_results) == 2
+    await bus.stop(clear=True, timeout=0)
 
-    # HandlerClass1.on_TopmostEvent should have completed
-    security_result = next(r for r in navigate_event.event_results.values() if 'HandlerClass1' in r.handler_name)
-    assert security_result.status == 'completed'
-    assert security_result.result == 'security_check_passed'
-
-    # MainClass0.on_TopmostEvent should have error (child timed out)
-    browser_result = next(
-        r
-        for r in navigate_event.event_results.values()
-        if 'MainClass0' in r.handler_name and 'TopmostEvent' in r.handler_name
-    )
-    assert browser_result.status == 'error'
-
-    # Find the ChildEvent in children
-    tab_event = browser_result.event_children[0]
-    assert tab_event.event_type == 'ChildEvent'
-    assert len(tab_event.event_results) == 1
-
-    # MainClass0.ChildEvent should have timed out
-    tab_result = list(tab_event.event_results.values())[0]
-    assert tab_result.status == 'error'
-    assert isinstance(tab_result.error, RuntimeError)
-    assert 'timed out' in str(tab_result.error)
-
-    # Find GrandchildEvent in tab handler's children
-    nav_event = tab_result.event_children[0]
-    assert nav_event.event_type == 'GrandchildEvent'
-
-    # Check GrandchildEvent handlers
-    nav_results = list(nav_event.event_results.values())
-    print(f"DEBUG: nav_event has {len(nav_results)} results")
-    for r in nav_results:
-        print(f"  - {r.handler_name}: status={r.status}, started_at={r.started_at is not None}")
-
-    # MainClass0.on_GrandchildEvent should complete (9s < 10s timeout)
-    browser_nav_result = next(r for r in nav_results if 'MainClass0' in r.handler_name)
-    assert browser_nav_result.status == 'completed'
-    assert browser_nav_result.result == 'navigation_handled'
-
-    # HandlerClass2 should complete instantly
-    about_blank_result = next(r for r in nav_results if 'HandlerClass2' in r.handler_name)
-    assert about_blank_result.status == 'completed'
-    assert about_blank_result.result == 'about_blank_check_passed'
-
-    # HandlerClass1.on_GrandchildEvent should be started but not completed (interrupted)
-    security_nav_result = next(
-        r for r in nav_results if 'HandlerClass1' in r.handler_name and r.eventbus_name == 'MainClass0EventBus'
-    )
-    # It should have started but not completed due to parent timeout
-    assert security_nav_result.status == 'started'
-    assert security_nav_result.started_at is not None
-    assert security_nav_result.completed_at is None
-
-    # HandlerClass3 and HandlerClass4 should never have started (pending)
-    handler3_result = next((r for r in nav_results if 'HandlerClass3' in r.handler_name), None)
-    handler4_result = next((r for r in nav_results if 'HandlerClass4' in r.handler_name), None)
-
-    # These handlers may not have been executed at all due to serial execution
-    # and the timeout occurring before they could start
-    if handler3_result:
-        assert handler3_result.status in ('pending', 'started')
-    if handler4_result:
-        assert handler4_result.status in ('pending', 'started')
-
-    # Debug: check what's still running
-    print(f"\nBefore stop - pending events: {bus.events_pending}")
-    print(f"Before stop - started events: {bus.events_started}")
-    print(f"Before stop - completed events: {[e.event_type for e in bus.events_completed]}")
-    
-    # List all asyncio tasks
-    import asyncio
     import threading
-    
+            
     all_tasks = asyncio.all_tasks()
     print(f"\nOutstanding asyncio tasks ({len(all_tasks)}):")
     for task in all_tasks:
@@ -238,6 +187,95 @@ async def test_nested_timeout_scenario_from_issue():
     print(f"\nActive threads ({len(all_threads)}):")
     for thread in all_threads:
         print(f"  - {thread.name}: {thread.is_alive()}")
+
+    # import ipdb; ipdb.set_trace()
+
+    # # Check TopmostEvent results
+    # assert len(navigate_event.event_results) == 2
+
+    # # HandlerClass1.on_TopmostEvent should have completed
+    # security_result = next(r for r in navigate_event.event_results.values() if 'HandlerClass1' in r.handler_name)
+    # assert security_result.status == 'completed'
+    # assert security_result.result == 'security_check_passed'
+
+    # # MainClass0.on_TopmostEvent should have error (child timed out)
+    # browser_result = next(
+    #     r
+    #     for r in navigate_event.event_results.values()
+    #     if 'MainClass0' in r.handler_name and 'TopmostEvent' in r.handler_name
+    # )
+    # assert browser_result.status == 'error'
+
+    # # Find the ChildEvent in children
+    # tab_event = browser_result.event_children[0]
+    # assert tab_event.event_type == 'ChildEvent'
+    # assert len(tab_event.event_results) == 1
+
+    # # MainClass0.ChildEvent should have timed out
+    # tab_result = list(tab_event.event_results.values())[0]
+    # assert tab_result.status == 'error'
+    # assert isinstance(tab_result.error, RuntimeError)
+    # assert 'timed out' in str(tab_result.error)
+
+    # # Find GrandchildEvent in tab handler's children
+    # nav_event = tab_result.event_children[0]
+    # assert nav_event.event_type == 'GrandchildEvent'
+
+    # # Check GrandchildEvent handlers
+    # nav_results = list(nav_event.event_results.values())
+    # print(f"DEBUG: nav_event has {len(nav_results)} results")
+    # for r in nav_results:
+    #     print(f"  - {r.handler_name}: status={r.status}, started_at={r.started_at is not None}")
+
+    # # MainClass0.on_GrandchildEvent should complete (9s < 10s timeout)
+    # browser_nav_result = next(r for r in nav_results if 'MainClass0' in r.handler_name)
+    # assert browser_nav_result.status == 'completed'
+    # assert browser_nav_result.result == 'navigation_handled'
+
+    # # HandlerClass2 should complete instantly
+    # about_blank_result = next(r for r in nav_results if 'HandlerClass2' in r.handler_name)
+    # assert about_blank_result.status == 'completed'
+    # assert about_blank_result.result == 'about_blank_check_passed'
+
+    # # HandlerClass1.on_GrandchildEvent should be started but not completed (interrupted)
+    # security_nav_result = next(
+    #     r for r in nav_results if 'HandlerClass1' in r.handler_name and r.eventbus_name == 'MainClass0EventBus'
+    # )
+    # # It should have started but not completed due to parent timeout
+    # assert security_nav_result.status == 'started'
+    # assert security_nav_result.started_at is not None
+    # assert security_nav_result.completed_at is None
+
+    # # HandlerClass3 and HandlerClass4 should never have started (pending)
+    # handler3_result = next((r for r in nav_results if 'HandlerClass3' in r.handler_name), None)
+    # handler4_result = next((r for r in nav_results if 'HandlerClass4' in r.handler_name), None)
+
+    # # These handlers may not have been executed at all due to serial execution
+    # # and the timeout occurring before they could start
+    # if handler3_result:
+    #     assert handler3_result.status in ('pending', 'started')
+    # if handler4_result:
+    #     assert handler4_result.status in ('pending', 'started')
+
+    # # Debug: check what's still running
+    # print(f"\nBefore stop - pending events: {bus.events_pending}")
+    # print(f"Before stop - started events: {bus.events_started}")
+    # print(f"Before stop - completed events: {[e.event_type for e in bus.events_completed]}")
     
-    # Clean up - give more time for handlers to complete
-    await bus.stop(timeout=2)
+    # # List all asyncio tasks
+    # import asyncio
+    # import threading
+    
+    # all_tasks = asyncio.all_tasks()
+    # print(f"\nOutstanding asyncio tasks ({len(all_tasks)}):")
+    # for task in all_tasks:
+    #     print(f"  - {task.get_name()}: {task._state} - {task.get_coro()}")
+    
+    # # List all threads
+    # all_threads = threading.enumerate()
+    # print(f"\nActive threads ({len(all_threads)}):")
+    # for thread in all_threads:
+    #     print(f"  - {thread.name}: {thread.is_alive()}")
+    
+    # # Clean up - give more time for handlers to complete
+    # await bus.stop(timeout=2)

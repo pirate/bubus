@@ -289,7 +289,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
                 # We're inside a handler and hold the global lock
                 # Process events until this one completes
 
-                logger.debug(f'__await__ for {self} - inside handler context, processing child events')
+                # logger.debug(f'__await__ for {self} - inside handler context, processing child events')
 
                 # Keep processing events from all buses until this event is complete
                 max_iterations = 1000  # Prevent infinite loops
@@ -342,9 +342,9 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
                 await self.event_completed_signal.wait()
 
             # Check if any handlers had errors and raise the first one
-            for result in self.event_results.values():
-                if result.error:
-                    raise result.error
+            # for result in self.event_results.values():
+            #     if result.error:
+            #         raise result.error
 
             # Return the completed event without raising errors
             # Errors should only be raised when explicitly requested via event_result() methods
@@ -730,6 +730,17 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             if not child_event.event_are_all_children_complete(_visited):
                 return False
         return True
+    
+    def event_cancel_pending_child_processing(self, error: BaseException) -> None:
+        """Cancel any pending child events that were dispatched during handler execution"""
+        if not isinstance(error, asyncio.CancelledError):
+            error = asyncio.CancelledError(f'Cancelled pending handler as a result of parent error {error}')  # keep the word "pending" in the error, checked by print_handler_line()
+        for child_event in self.event_children:
+            for result in child_event.event_results.values():
+                if result.status == 'pending':
+                    # print('CANCELLING CHILD HANDLER', result, 'due to', error)
+                    result.update(error=error)
+            child_event.event_cancel_pending_child_processing(error)
 
     def event_log_safe_summary(self) -> dict[str, Any]:
         """only event metadata without contents, avoid potentially sensitive event contents in logs"""
@@ -798,7 +809,7 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
         revalidate_instances='always',
     )
 
-    # Automatically set fields, setup at Event init and updated by the EventBus._execute_sync_or_async_handler() calling event_result.update(...)
+    # Automatically set fields, setup at Event init and updated by the EventBus.execute_handler() calling event_result.update(...)
     id: UUIDStr = Field(default_factory=uuid7str)
     status: Literal['pending', 'started', 'completed', 'error'] = 'pending'
     event_id: UUIDStr
@@ -810,7 +821,7 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
     timeout: float | None = None
     started_at: datetime | None = None
 
-    # Result fields, updated by the EventBus._execute_sync_or_async_handler() calling event_result.update(...)
+    # Result fields, updated by the EventBus.execute_handler() calling event_result.update(...)
     result: T_EventResultType | BaseEvent[Any] | None = None
     error: BaseException | None = None
     completed_at: datetime | None = None

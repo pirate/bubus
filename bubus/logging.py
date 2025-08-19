@@ -1,5 +1,6 @@
 """Helper functions for logging event trees and formatting"""
 
+import asyncio
 from collections import defaultdict
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -206,6 +207,7 @@ def log_timeout_tree(event: 'BaseEvent[Any]', timed_out_result: 'EventResult[Any
     red = '\033[91m'
     green = '\033[92m'
     yellow = '\033[93m'
+    pink = '\033[95m'
     reset = '\033[0m'
     
     logger.warning('=' * 80)
@@ -221,20 +223,23 @@ def log_timeout_tree(event: 'BaseEvent[Any]', timed_out_result: 'EventResult[Any
         completed_at: datetime | None = None,
         timeout: float | None = None,
         is_expired: bool = False,
-        is_interrupted: bool = False
+        is_interrupted: bool = False,
+        is_pending: bool = False,
     ):
         """Print a formatted handler line with proper column alignment"""
         
         # Col 2: icon based on status
         if status == 'completed':
             col2_icon = '☑️'
+        elif is_pending:
+            col2_icon = '🔚'
         elif status == 'error':
-            col2_icon = '☠️'
+            col2_icon = '❌'
         elif status == 'started':
             col2_icon = '➡️'
         else:
             col2_icon = '🔜'
-        
+    
         # Col 3: handler description
         col3_desc = f'{handler_name}(#{event_id_suffix})'
         
@@ -247,9 +252,15 @@ def log_timeout_tree(event: 'BaseEvent[Any]', timed_out_result: 'EventResult[Any
             elapsed_time = ((completed_at or now) - started_at).total_seconds()
             max_time = round(timeout or 0)
             
-            if is_expired:
+            if is_expired or (elapsed_time >= max_time):
                 col5_timing_icon = '⌛️'
-                col9_extra = f'    ⬅️ {red}TIMEOUT HERE{reset} ⏰'
+                if is_expired:
+                    col9_extra = f'    ⬅️ {red}TIMEOUT HERE{reset} ⏰'
+                else:
+                    col9_extra = f'    ☠️ {pink}FAILED{reset}'   # timed out before us, but unrelated to current timeout exception chain, not the direct cause of our current error
+            elif is_interrupted and is_pending:
+                col5_timing_icon = '  '
+                col9_extra = f'    ⛔️ {pink}SKIPPED{reset}'
             elif is_interrupted:
                 col5_timing_icon = '⏳'
                 col9_extra = f'    ⬅️ {yellow}INTERRUPTED{reset} ✂️'
@@ -260,12 +271,16 @@ def log_timeout_tree(event: 'BaseEvent[Any]', timed_out_result: 'EventResult[Any
                 col5_timing_icon = '  '
                 col9_extra = ''
             
-            if elapsed_time >= max_time or status == 'error':
+            if elapsed_time >= max_time and not is_pending:
                 col6_elapsed = f'{red}{round(elapsed_time):2d}s{reset}'
             elif elapsed_time > 3:
                 col6_elapsed = f'{yellow}{round(elapsed_time):2d}s{reset}'
             elif status == 'completed':
                 col6_elapsed = f'{green}{round(elapsed_time):2d}s{reset}'
+            elif is_pending:
+                col6_elapsed = '   '
+            elif is_interrupted or (status == 'error' and elapsed_time <= max_time):
+                col6_elapsed = f'{yellow}{round(elapsed_time):2d}s{reset}'
             else:
                 col6_elapsed = f'{round(elapsed_time):2d}s'
             
@@ -336,7 +351,7 @@ def log_timeout_tree(event: 'BaseEvent[Any]', timed_out_result: 'EventResult[Any
             
             # Check if this handler was interrupted (started but not completed, in a child of the timed-out handler)
             is_interrupted = False
-            if result.status == 'started' and result.started_at and not result.completed_at:
+            if result.status == 'error' and isinstance(result.error, asyncio.CancelledError):
                 # Check if this result is in a child event of the timed-out handler
                 for timed_out_child in timed_out_result.event_children:
                     if evt.event_id == timed_out_child.event_id:
@@ -353,7 +368,8 @@ def log_timeout_tree(event: 'BaseEvent[Any]', timed_out_result: 'EventResult[Any
                 completed_at=result.completed_at,
                 timeout=result.timeout or evt.event_timeout,
                 is_expired=is_expired,
-                is_interrupted=is_interrupted
+                is_interrupted=is_interrupted,
+                is_pending='pending' in str(result.error),
             )
             
             # Print child events dispatched by this handler
