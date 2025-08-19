@@ -5,7 +5,8 @@ from typing import Any
 import pytest
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
-from bubus.models import BaseEvent, _extract_basemodel_generic_arg  # type: ignore
+from bubus import BaseEvent
+from bubus.event import _extract_basemodel_generic_arg  # type: ignore
 
 
 class UserData(BaseModel):

@@ -64,7 +64,7 @@ async def test_20k_events_with_memory_control():
             dispatched += 1
             if dispatched <= 5:
                 print(f'Dispatched event {dispatched}')
-        except RuntimeError as e:
+        except OverflowError as e:
             if 'EventBus at capacity' in str(e):
                 # Queue is full, complete the oldest pending events to make room
                 # Complete first 10 events to free up space
@@ -175,7 +175,7 @@ async def test_hard_limit_enforcement():
             try:
                 bus.dispatch(SimpleEvent())
                 events_dispatched += 1
-            except RuntimeError as e:
+            except OverflowError as e:
                 if 'EventBus at capacity' in str(e):
                     errors += 1
                 else:

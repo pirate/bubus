@@ -148,13 +148,13 @@ async def test_event_bus_property_outside_handler():
     event = MainEvent()
 
     # Should raise error when accessed outside handler context
-    with pytest.raises(RuntimeError, match='event_bus property can only be accessed from within an event handler'):
+    with pytest.raises(AttributeError, match='event_bus property can only be accessed from within an event handler'):
         _ = event.event_bus
 
     # Even after dispatching, accessing outside handler should fail
     dispatched_event = await bus.dispatch(event)
 
-    with pytest.raises(RuntimeError, match='event_bus property can only be accessed from within an event handler'):
+    with pytest.raises(AttributeError, match='event_bus property can only be accessed from within an event handler'):
         _ = dispatched_event.event_bus
 
     await bus.stop()

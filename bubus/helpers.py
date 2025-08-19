@@ -6,7 +6,9 @@ import time
 from collections.abc import Callable, Coroutine
 from functools import wraps
 from pathlib import Path
-from typing import Any, Literal, ParamSpec, TypeVar
+from typing import Any, Literal, ParamSpec
+
+from typing_extensions import TypeVar
 
 import portalocker
 
@@ -400,7 +402,7 @@ async def _execute_with_retries(
                 raise
 
     # This should never be reached, but satisfies type checker
-    raise RuntimeError('Unexpected state in retry logic')
+    raise RuntimeError(f'Unexpected error in @retry decorator during execution of {func.__name__}()')
 
 
 def _track_active_operations(increment: bool = True) -> None:

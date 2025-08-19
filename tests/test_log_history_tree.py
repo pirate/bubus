@@ -5,8 +5,7 @@ from datetime import UTC, datetime
 from io import StringIO
 from typing import Any
 
-from bubus import BaseEvent, EventBus
-from bubus.models import EventResult
+from bubus import BaseEvent, EventBus, EventResult
 
 
 class RootEvent(BaseEvent[str]):

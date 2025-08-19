@@ -612,7 +612,7 @@ class TestEventTypeOverride:
 
         # Test various event types
         base_event = BaseEvent(event_type='TestEvent')
-        assert base_event.event_schema == f'bubus.models.BaseEvent@{version}'
+        assert base_event.event_schema == f'bubus.event.BaseEvent@{version}'
 
         task_event = CreateAgentTaskEvent(
             user_id='test_user', agent_session_id='12345678-1234-5678-1234-567812345678', llm_model='test-model', task='test task'
