@@ -155,7 +155,7 @@ EventResultFilter = Callable[['EventResult[Any]'], bool]
 def get_handler_name(handler: ContravariantEventHandler[T_Event]) -> str:
     assert hasattr(handler, '__name__'), f'Handler {handler} has no __name__ attribute!'
     if inspect.ismethod(handler):
-        return f'{handler.__self__}.{handler.__name__}'
+        return f'{type(handler.__self__).__name__}.{handler.__name__}'
     elif callable(handler):
         return f'{handler.__module__}.{handler.__name__}'  # type: ignore
     else:
@@ -295,40 +295,54 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
                 max_iterations = 1000  # Prevent infinite loops
                 iterations = 0
 
-                while not self.event_completed_signal.is_set() and iterations < max_iterations:
-                    iterations += 1
-                    processed_any = False
+                try:
+                    while not self.event_completed_signal.is_set() and iterations < max_iterations:
+                        iterations += 1
+                        processed_any = False
 
-                    # Process any queued events on all buses
-                    # Create a list copy to avoid "Set changed size during iteration" error
-                    for bus in list(EventBus.all_instances):
-                        if not bus or not bus.event_queue:
-                            continue
+                        # Process any queued events on all buses
+                        # Create a list copy to avoid "Set changed size during iteration" error
+                        for bus in list(EventBus.all_instances):
+                            if not bus or not bus.event_queue:
+                                continue
 
-                        # Process one event from this bus if available
-                        try:
-                            if bus.event_queue.qsize() > 0:
-                                event = bus.event_queue.get_nowait()
-                                await bus.process_event(event)
-                                bus.event_queue.task_done()
-                                processed_any = True
-                        except asyncio.QueueEmpty:
-                            pass
+                            # Process one event from this bus if available
+                            try:
+                                if bus.event_queue.qsize() > 0:
+                                    event = bus.event_queue.get_nowait()
+                                    await bus.process_event(event)
+                                    bus.event_queue.task_done()
+                                    processed_any = True
+                                    # Check if the event we're waiting for is now complete
+                                    if self.event_completed_signal.is_set():
+                                        break
+                            except asyncio.QueueEmpty:
+                                pass
+                        
+                        # Break out of the loop if event completed after processing
+                        if self.event_completed_signal.is_set():
+                            break
 
-                    if not processed_any:
-                        # No events to process, yield control
-                        await asyncio.sleep(0)
+                        if not processed_any:
+                            # No events to process, yield control and check for cancellation
+                            try:
+                                await asyncio.sleep(0)
+                            except asyncio.CancelledError:
+                                raise
+                except asyncio.CancelledError:
+                    # Handler was cancelled due to timeout, exit cleanly
+                    logger.debug(f'Polling loop cancelled for {self}')
+                    raise
 
                 if iterations >= max_iterations:
-                    logger.error(f'Max iterations reached while waiting for {self}')
+                    # logger.error(f'Max iterations reached while waiting for {self}')
+                    pass
+            else:
+                # Not in handler context - wait for the event to complete normally
+                await self.event_completed_signal.wait()
 
-            try:
-                await asyncio.wait_for(self.event_completed_signal.wait(), timeout=self.event_timeout)
-            except TimeoutError:
-                raise RuntimeError(
-                    f'{self} waiting for results timed out after {self.event_timeout}s (being processed by {len(self.event_results)} handlers)'
-                )
-
+            # Return the completed event without raising errors
+            # Errors should only be raised when explicitly requested via event_result() methods
             return self
 
         return wait_for_handlers_to_complete_then_return_event().__await__()
@@ -840,8 +854,8 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
             try:
                 await asyncio.wait_for(self.handler_completed_signal.wait(), timeout=self.timeout)
             except TimeoutError:
-                self.handler_completed_signal.clear()
-                raise RuntimeError(f'Event handler {self.handler_name} timed out after {self.timeout}s')
+                # self.handler_completed_signal.clear()
+                raise RuntimeError(f'Event handler {self.eventbus_name}.{self.handler_name}(#{self.event_id[-4:]}) timed out after {self.timeout}s')
 
             if self.status == 'error' and self.error:
                 raise self.error if isinstance(self.error, BaseException) else Exception(self.error)  # pyright: ignore[reportUnnecessaryIsInstance]

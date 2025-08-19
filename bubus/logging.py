@@ -103,12 +103,9 @@ def log_eventresult_tree(
 
     # Status icon
     result_icon = (
-        '✅'
-        if result.status == 'completed'
-        else '❌'
-        if result.status == 'error'
-        else '🏃'
-        if result.status == 'started'
+        '✅' if result.status == 'completed'
+        else '❌' if result.error is not None
+        else '🏃' if result.status == 'started'
         else '⏳'
     )
 
@@ -128,7 +125,7 @@ def log_eventresult_tree(
 
     # Add result value or error
     if result.status == 'error' and result.error:
-        result_line += f' ❌ {type(result.error).__name__}: {str(result.error)}'
+        result_line += f' ☠️ {type(result.error).__name__}: {str(result.error)}'
     elif result.status == 'completed':
         result_line += f' → {format_result_value(result.result)}'
 
@@ -183,3 +180,219 @@ def log_eventbus_tree(eventbus: 'EventBus') -> None:
         log_event_tree(event, '', is_last, parent_to_children)
 
     print('=' * 80)
+
+
+def log_timeout_tree(event: 'BaseEvent[Any]', timed_out_result: 'EventResult[Any]') -> None:
+    """Log detailed timeout information showing the event tree and which handler timed out"""
+    
+    from bubus.models import logger
+    
+    now = datetime.now(UTC)
+    
+    # Find the root event by walking up the parent chain
+    root_event = event
+    eventbus = event.event_bus
+    while root_event.event_parent_id:
+        parent_found = False
+        # Search for parent in all EventBus instances
+        for bus in list(eventbus.all_instances):
+            if root_event.event_parent_id in bus.event_history:
+                root_event = bus.event_history[root_event.event_parent_id]
+                parent_found = True
+                break
+        if not parent_found:
+            break
+        
+    red = '\033[91m'
+    green = '\033[92m'
+    yellow = '\033[93m'
+    reset = '\033[0m'
+    
+    logger.warning('=' * 80)
+    logger.warning(f'⏱️  TIMEOUT ERROR - Handling took more than {event.event_timeout}s for {timed_out_result.eventbus_name}.{timed_out_result.handler_name}({event})')
+    logger.warning('=' * 80)
+    
+    def print_handler_line(
+        handler_indent: str,
+        handler_name: str,
+        event_id_suffix: str,
+        status: str = 'pending',
+        started_at: datetime | None = None,
+        completed_at: datetime | None = None,
+        timeout: float | None = None,
+        is_expired: bool = False,
+        is_interrupted: bool = False
+    ):
+        """Print a formatted handler line with proper column alignment"""
+        
+        # Col 2: icon based on status
+        if status == 'completed':
+            col2_icon = '☑️'
+        elif status == 'error':
+            col2_icon = '☠️'
+        elif status == 'started':
+            col2_icon = '➡️'
+        else:
+            col2_icon = '🔜'
+        
+        # Col 3: handler description
+        col3_desc = f'{handler_name}(#{event_id_suffix})'
+        
+        # Col 4: padding to column 64
+        left_part = f'{handler_indent}{col2_icon} {col3_desc}'
+        col4_padding = ' ' * max(1, 64 - len(f'{handler_indent}   {col3_desc}'))  # assume icons are always 2 chars wide
+        
+        # Col 5-10: timing info
+        if started_at:
+            elapsed_time = ((completed_at or now) - started_at).total_seconds()
+            max_time = round(timeout or 0)
+            
+            if is_expired:
+                col5_timing_icon = '⌛️'
+                col9_extra = f'    ⬅️ {red}TIMEOUT HERE{reset} ⏰'
+            elif is_interrupted:
+                col5_timing_icon = '⏳'
+                col9_extra = f'    ⬅️ {yellow}INTERRUPTED{reset} ✂️'
+            elif status == 'started':
+                col5_timing_icon = '⏳'
+                col9_extra = ''
+            else:
+                col5_timing_icon = '  '
+                col9_extra = ''
+            
+            if elapsed_time >= max_time or status == 'error':
+                col6_elapsed = f'{red}{round(elapsed_time):2d}s{reset}'
+            elif elapsed_time > 3:
+                col6_elapsed = f'{yellow}{round(elapsed_time):2d}s{reset}'
+            elif status == 'completed':
+                col6_elapsed = f'{green}{round(elapsed_time):2d}s{reset}'
+            else:
+                col6_elapsed = f'{round(elapsed_time):2d}s'
+            
+            col7_slash = '/'
+            if is_expired or elapsed_time >= max_time:
+                col8_max = f'{red}{max_time:2d}s{reset}'
+            else:
+                col8_max = f'{max_time:2d}s'
+        else:
+            # Never started - pending
+            col5_timing_icon = '🔜'
+            col6_elapsed = '   '
+            col7_slash = '/'
+            col8_max = f'{round(timeout or 0):2d}s'
+            col9_extra = ''
+        
+        # Assemble and print
+        logger.warning(f'{left_part}{col4_padding}{col5_timing_icon} {col6_elapsed}{col7_slash}{col8_max}  {col9_extra}')
+    
+    def print_event_tree(evt: 'BaseEvent[Any]', indent: str = ''):
+        """Recursively print event and its handlers"""
+        event_start_time = min((result.started_at for result in evt.event_results.values() if result.started_at is not None), default=evt.event_created_at) or evt.event_created_at
+        now = datetime.now(UTC)
+        elapsed = round((now - event_start_time).total_seconds())
+        
+        # Event line formatted with proper columns
+        # Col 1: indent, Col 2: icon (📣), Col 3: description
+        col1_indent = indent
+        col2_icon = '📣'
+        col3_desc = f'{evt.event_type}#{evt.event_id[-4:]}'
+        
+        # Col 4: padding to column 70
+        left_part = f'{col1_indent}{col2_icon} {col3_desc}'
+        col4_padding = ' ' * max(1, 64 - len(f'{col1_indent}   {col3_desc}'))
+        
+        # Col 5-9: timing info
+        col5_timing_icon = '   '  # No icon for event lines
+        if elapsed >= ((evt.event_timeout or 1) * len(evt.event_results)):
+            col6_elapsed = f'{red}{elapsed:2d}s{reset}'
+        elif elapsed > 5 or evt.event_status == 'started':
+            col6_elapsed = f'{yellow}{elapsed:2d}s{reset}'
+        elif evt.event_status == 'completed' and all(result.error is None for result in evt.event_results.values()):
+            col6_elapsed = f'{green}{elapsed:2d}s{reset}'
+        else:
+            col6_elapsed = f'{elapsed:2d}s'
+
+        # col7_slash = '/'
+        # col8_max = f'{round(evt.event_timeout or 1) * len(evt.event_results):2d}s'
+        # if evt.event_status == 'completed':
+        #     col8_max = f'{green}{col8_max}{reset}'
+        # elif evt.event_status == 'error':
+        #     col8_max = f'{red}{col8_max}{reset}'
+        # elif evt.event_status == 'started':
+        #     col8_max = f'{yellow}{col8_max}{reset}'
+        # else:
+        #     col8_max = f'{col8_max}{reset}'
+        
+        # Assemble and print
+        logger.warning(f'{left_part}{col4_padding}{col5_timing_icon}    {col6_elapsed}')
+        
+        # Increase indent for handlers (3 spaces to align under event name)
+        handler_indent = indent + '   '
+        
+        # Get all handlers for this event
+        for result in evt.event_results.values():
+            # Check if this is the exact handler that timed out
+            is_expired = (result.handler_id == timed_out_result.handler_id)
+            
+            # Check if this handler was interrupted (started but not completed, in a child of the timed-out handler)
+            is_interrupted = False
+            if result.status == 'started' and result.started_at and not result.completed_at:
+                # Check if this result is in a child event of the timed-out handler
+                for timed_out_child in timed_out_result.event_children:
+                    if evt.event_id == timed_out_child.event_id:
+                        is_interrupted = True
+                        break
+            
+            # Print the handler line using helper function
+            print_handler_line(
+                handler_indent=handler_indent,
+                handler_name=result.handler_name,
+                event_id_suffix=result.event_id[-4:],
+                status=result.status,
+                started_at=result.started_at,
+                completed_at=result.completed_at,
+                timeout=result.timeout or evt.event_timeout,
+                is_expired=is_expired,
+                is_interrupted=is_interrupted
+            )
+            
+            # Print child events dispatched by this handler
+            for child_event in result.event_children:
+                print_event_tree(child_event, handler_indent + '   ')
+        
+        # After showing all handlers that ran, show any registered handlers that never started
+        # This is for handlers that were registered but didn't get to run due to timeouts
+        from bubus.models import get_handler_id, get_handler_name
+        
+        # Find which EventBus contains this event
+        event_bus = None
+        for bus in list(eventbus.all_instances):
+            if evt.event_id in bus.event_history:
+                event_bus = bus
+                break
+        
+        # Get all registered handlers for this event type
+        if event_bus and hasattr(event_bus, 'handlers') and evt.event_type in event_bus.handlers:
+            registered_handlers = event_bus.handlers[evt.event_type]
+            
+            for handler in registered_handlers:
+                handler_id = get_handler_id(handler, event_bus)
+                # Check if this handler already ran (has an EventResult)
+                if handler_id not in evt.event_results:
+                    # This handler was registered but never started - use helper to format
+                    print_handler_line(
+                        handler_indent=handler_indent,
+                        handler_name=get_handler_name(handler),
+                        event_id_suffix=evt.event_id[-4:],
+                        status='pending',  # Will show 🔲 icon
+                        started_at=None,
+                        completed_at=None,
+                        timeout=evt.event_timeout,
+                        is_expired=False,
+                        is_interrupted=False
+                    )
+    
+    # Print the tree starting from root
+    print_event_tree(root_event)
+    
+    logger.warning('\n' + '=' * 80 + '\n')

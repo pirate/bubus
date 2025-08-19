@@ -299,7 +299,7 @@ async def on_generate_invoice_pdf(event: GenerateInvoiceEvent) -> pdf:
             exclude=lambda e: e.status != 'retrying',                 # optionally exclude certain events, overrides include
             timeout=30,                                               # raises asyncio.TimeoutError if no match is seen within 30sec
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         await bus.dispatch(TimedOutError(msg='timed out while waiting for response from server', request_id=request_event.id))
 
     return response_event.invoice_url

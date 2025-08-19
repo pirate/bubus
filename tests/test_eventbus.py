@@ -1014,7 +1014,7 @@ class TestExpectMethod:
     async def test_expect_timeout(self, eventbus):
         """Test expect timeout behavior"""
         # Expect an event that will never come
-        with pytest.raises(asyncio.TimeoutError):
+        with pytest.raises(TimeoutError):
             await eventbus.expect('NonExistentEvent', timeout=0.1)
 
     async def test_expect_with_model_class(self, eventbus):

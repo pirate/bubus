@@ -2,6 +2,7 @@ import asyncio
 import contextvars
 import inspect
 import logging
+import traceback
 import warnings
 import weakref
 from collections import defaultdict, deque
@@ -228,6 +229,22 @@ def _log_pretty_path(path: Path | str | None) -> str:
         pretty_path = f'"{pretty_path}"'
 
     return pretty_path
+
+def _log_filtered_traceback(exc: BaseException) -> str:
+    te = traceback.TracebackException.from_exception(exc, capture_locals=False)
+
+    def _filter(te: traceback.TracebackException):
+        te.stack = traceback.StackSummary.from_list([
+            f for f in te.stack
+            if "asyncio/tasks.py" not in f.filename and "lib/python" not in f.filename
+        ])
+        if te.__cause__:
+            _filter(te.__cause__)
+        if te.__context__:
+            _filter(te.__context__)
+
+    _filter(te)
+    return "".join(te.format())
 
 
 class EventBus:
@@ -944,6 +961,17 @@ class EventBus:
         """Process a single event (assumes lock is already held)"""
         # Get applicable handlers
         applicable_handlers = self._get_applicable_handlers(event)
+        
+        # Create pending EventResults for all applicable handlers before execution
+        # This ensures the event knows it has handlers and won't mark itself complete prematurely
+        for handler_id, handler in applicable_handlers.items():
+            if handler_id not in event.event_results:
+                event.event_result_update(
+                    handler=handler,
+                    eventbus=self,
+                    status='pending',
+                    timeout=timeout or event.event_timeout
+                )
 
         # Execute handlers
         await self._execute_handlers(event, handlers=applicable_handlers, timeout=timeout)
@@ -1091,11 +1119,13 @@ class EventBus:
             deadlock_monitor(), name=f'{self}.deadlock_monitor({event}, {get_handler_name(handler)}#{handler_id[-4:]})'
         )
 
+        handler_task = None
         try:
             if inspect.iscoroutinefunction(handler):
-                # Run async handler directly (no separate task)
+                # Create a task for the handler so we can properly cancel it on timeout
+                handler_task = asyncio.create_task(handler(event))  # type: ignore
                 # This allows us to process child events when the handler awaits them
-                result_value: Any = await asyncio.wait_for(handler(event), timeout=event_result.timeout)  # type: ignore
+                result_value: Any = await asyncio.wait_for(handler_task, timeout=event_result.timeout)
             elif inspect.isfunction(handler) or inspect.ismethod(handler):
                 # If handler function is sync function, run it directly in the main thread
                 # This blocks but ensures we have access to the event loop, dont run it in a subthread!
@@ -1129,6 +1159,17 @@ class EventBus:
                 logger.error(f'    ↳ ERROR: Result not found for {get_handler_name(handler)}#{handler_id[-4:]} after update!')
             return cast(T_EventResultType, result_value)
 
+        except TimeoutError as e:
+            # Cancel the monitor task on timeout too
+            monitor_task.cancel()
+            
+            # Create a RuntimeError for timeout
+            handler_timeout_error = RuntimeError(f'Event handler {get_handler_name(handler)}#{handler_id[-4:]}({event}) timed out after {event_result.timeout}s and interrupted any child processing')
+            event.event_result_update(handler=handler, eventbus=self, error=handler_timeout_error)
+            
+            from bubus.logging import log_timeout_tree
+            log_timeout_tree(event, event_result)
+            raise e from handler_timeout_error
         except Exception as e:
             # Cancel the monitor task on error too
             monitor_task.cancel()
@@ -1136,9 +1177,10 @@ class EventBus:
             # Record error
             event.event_result_update(handler=handler, eventbus=self, error=e)
 
-            logger.exception(
-                f'❌ {self} Error in event handler {get_handler_name(handler)}#{str(id(handler))[-4:]}({event}) -> {type(e).__name__}({e})',
-                exc_info=True,
+            red = '\033[91m'
+            reset = '\033[0m'
+            logger.error(
+                f'❌ {self} Error in event handler {get_handler_name(handler)}({event}) -> \n{red}{type(e).__name__}({e}){reset}\n{_log_filtered_traceback(e)}',
             )
             raise
         finally:
@@ -1146,6 +1188,15 @@ class EventBus:
             _current_event_context.reset(token)
             inside_handler_context.reset(handler_token)
             _current_handler_id_context.reset(handler_id_token)
+            
+            # Ensure handler task is cancelled if it's still running
+            if handler_task and not handler_task.done():
+                handler_task.cancel()
+                try:
+                    await asyncio.wait_for(handler_task, timeout=0.1)
+                except (asyncio.CancelledError, TimeoutError):
+                    pass  # Expected when we cancel the task
+            
             # Ensure monitor task is cancelled
             try:
                 if not monitor_task.done():
