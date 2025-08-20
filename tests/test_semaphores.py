@@ -794,7 +794,7 @@ class TestRetryWithEventBus:
             # This will timeout
             await asyncio.sleep(5)
             return 'Should not reach here'
-        
+
         @retry(
             retries=0,  # No retries
             timeout=0.2,  # 200ms timeout

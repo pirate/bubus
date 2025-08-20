@@ -80,20 +80,20 @@ class MainClass0:
         try:
             await child_event  # This will timeout after 10s
         except Exception as e:
-            print(f"DEBUG: Parent caught child error: {type(e).__name__}: {e}")
+            print(f'DEBUG: Parent caught child error: {type(e).__name__}: {e}')
 
             import threading
-            
+
             all_tasks = asyncio.all_tasks()
-            print(f"\nOutstanding asyncio tasks ({len(all_tasks)}):")
+            print(f'\nOutstanding asyncio tasks ({len(all_tasks)}):')
             for task in all_tasks:
-                print(f"  - {task.get_name()}: {task._state} - {task.get_coro()}")
-            
+                print(f'  - {task.get_name()}: {task._state} - {task.get_coro()}')
+
             # List all threads
             all_threads = threading.enumerate()
-            print(f"\nActive threads ({len(all_threads)}):")
+            print(f'\nActive threads ({len(all_threads)}):')
             for thread in all_threads:
-                print(f"  - {thread.name}: {thread.is_alive()}")
+                print(f'  - {thread.name}: {thread.is_alive()}')
 
             raise
 
@@ -110,7 +110,7 @@ class MainClass0:
         # Since handlers run serially and we have a 10s timeout, we'll timeout while
         # HandlerClass1 is still running (after about 1s of its 5s execution)
         await grandchild_event  # .event_result(raise_if_any=False, raise_if_none=True, timeout=15)
-        
+
         # Would continue but we timeout first
         return 'MainClass0.on_ChildEvent completed after GrandchildEvent() finished processing'
 
@@ -162,11 +162,13 @@ async def test_nested_timeout_scenario_from_issue():
     # Wait for it to complete (will fail due to timeout)
     # with pytest.raises((RuntimeError, TimeoutError)) as exc_info:
     try:
-        await navigate_event   # .event_result(raise_if_any=True, raise_if_none=True, timeout=20)  # The event should complete with an error
+        await (
+            navigate_event
+        )  # .event_result(raise_if_any=True, raise_if_none=True, timeout=20)  # The event should complete with an error
     except Exception as e:
-        print(f"Exception caught: {type(e).__name__}: {e}")
+        print(f'Exception caught: {type(e).__name__}: {e}')
         raise
-        
+
     # import ipdb; ipdb.set_trace()
 
     # print('-----------------------------------------------------')

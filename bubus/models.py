@@ -318,7 +318,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
                                         break
                             except asyncio.QueueEmpty:
                                 pass
-                        
+
                         # Break out of the loop if event completed after processing
                         if self.event_completed_signal.is_set():
                             break
@@ -730,11 +730,13 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             if not child_event.event_are_all_children_complete(_visited):
                 return False
         return True
-    
+
     def event_cancel_pending_child_processing(self, error: BaseException) -> None:
         """Cancel any pending child events that were dispatched during handler execution"""
         if not isinstance(error, asyncio.CancelledError):
-            error = asyncio.CancelledError(f'Cancelled pending handler as a result of parent error {error}')  # keep the word "pending" in the error, checked by print_handler_line()
+            error = asyncio.CancelledError(
+                f'Cancelled pending handler as a result of parent error {error}'
+            )  # keep the word "pending" in the error, checked by print_handler_line()
         for child_event in self.event_children:
             for result in child_event.event_results.values():
                 if result.status == 'pending':
@@ -871,7 +873,9 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
                 await asyncio.wait_for(self.handler_completed_signal.wait(), timeout=self.timeout)
             except TimeoutError:
                 # self.handler_completed_signal.clear()
-                raise TimeoutError(f'Event handler {self.eventbus_name}.{self.handler_name}(#{self.event_id[-4:]}) timed out after {self.timeout}s')
+                raise TimeoutError(
+                    f'Event handler {self.eventbus_name}.{self.handler_name}(#{self.event_id[-4:]}) timed out after {self.timeout}s'
+                )
 
             if self.status == 'error' and self.error:
                 raise self.error if isinstance(self.error, BaseException) else Exception(self.error)  # pyright: ignore[reportUnnecessaryIsInstance]

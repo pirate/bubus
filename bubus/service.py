@@ -230,21 +230,21 @@ def _log_pretty_path(path: Path | str | None) -> str:
 
     return pretty_path
 
+
 def _log_filtered_traceback(exc: BaseException) -> str:
-    te = traceback.TracebackException.from_exception(exc, capture_locals=False)
+    trace_exc = traceback.TracebackException.from_exception(exc, capture_locals=False)
 
-    def _filter(te: traceback.TracebackException):
-        te.stack = traceback.StackSummary.from_list([
-            f for f in te.stack
-            if "asyncio/tasks.py" not in f.filename and "lib/python" not in f.filename
-        ])
-        if te.__cause__:
-            _filter(te.__cause__)
-        if te.__context__:
-            _filter(te.__context__)
+    def _filter(_: traceback.TracebackException):
+        trace_exc.stack = traceback.StackSummary.from_list(
+            [f for f in trace_exc.stack if 'asyncio/tasks.py' not in f.filename and 'lib/python' not in f.filename]
+        )
+        if trace_exc.__cause__:
+            _filter(trace_exc.__cause__)
+        if trace_exc.__context__:
+            _filter(trace_exc.__context__)
 
-    _filter(te)
-    return "".join(te.format())
+    _filter(trace_exc)
+    return ''.join(trace_exc.format())
 
 
 class EventBus:
@@ -963,16 +963,13 @@ class EventBus:
         """Process a single event (assumes lock is already held)"""
         # Get applicable handlers
         applicable_handlers = self._get_applicable_handlers(event)
-        
+
         # Create pending EventResults for all applicable handlers before execution
         # This ensures the event knows it has handlers and won't mark itself complete prematurely
         for handler_id, handler in applicable_handlers.items():
             if handler_id not in event.event_results:
                 event.event_result_update(
-                    handler=handler,
-                    eventbus=self,
-                    status='pending',
-                    timeout=timeout or event.event_timeout
+                    handler=handler, eventbus=self, status='pending', timeout=timeout or event.event_timeout
                 )
 
         # Execute handlers
@@ -1077,7 +1074,7 @@ class EventBus:
                         f'❌ {self} Handler {get_handler_name(handler)}#{str(id(handler))[-4:]}({event}) failed with {type(e).__name__}: {e}'
                     )
                     pass
-                
+
         # print('FINSIHED EXECUTING ALL HANDLERS')
 
     async def execute_handler(
@@ -1165,26 +1162,33 @@ class EventBus:
         except asyncio.CancelledError as e:
             # Cancel the monitor task on timeout too
             monitor_task.cancel()
-            
+
             # Create a RuntimeError for timeout
             # TODO: figure out why it breaks when we try to switch to InterruptedError instead of asyncio.CancelledError
-            handler_interrupted_error = asyncio.CancelledError(f'Event handler {get_handler_name(handler)}#{handler_id[-4:]}({event}) was interrupted because of a parent timeout')
+            handler_interrupted_error = asyncio.CancelledError(
+                f'Event handler {get_handler_name(handler)}#{handler_id[-4:]}({event}) was interrupted because of a parent timeout'
+            )
             event.event_result_update(handler=handler, eventbus=self, error=handler_interrupted_error)
-            
+
             # import ipdb; ipdb.set_trace()
             raise handler_interrupted_error from e
 
         except TimeoutError as e:
             # Cancel the monitor task on timeout too
             monitor_task.cancel()
-            
+
             # Create a RuntimeError for timeout
-            children = f' and interrupted any processing of {len(event.event_children)} child events' if event.event_children else ''
-            handler_timeout_error = TimeoutError(f'Event handler {get_handler_name(handler)}#{handler_id[-4:]}({event}) timed out after {event_result.timeout}s{children}')
+            children = (
+                f' and interrupted any processing of {len(event.event_children)} child events' if event.event_children else ''
+            )
+            handler_timeout_error = TimeoutError(
+                f'Event handler {get_handler_name(handler)}#{handler_id[-4:]}({event}) timed out after {event_result.timeout}s{children}'
+            )
             event.event_result_update(handler=handler, eventbus=self, error=handler_timeout_error)
             event.event_cancel_pending_child_processing(handler_timeout_error)
-            
+
             from bubus.logging import log_timeout_tree
+
             log_timeout_tree(event, event_result)
             # import ipdb; ipdb.set_trace()
             raise handler_timeout_error from e
@@ -1206,7 +1210,7 @@ class EventBus:
             _current_event_context.reset(token)
             inside_handler_context.reset(handler_token)
             _current_handler_id_context.reset(handler_id_token)
-            
+
             # Ensure handler task is cancelled if it's still running
             if handler_task and not handler_task.done():
                 handler_task.cancel()
@@ -1214,7 +1218,7 @@ class EventBus:
                     await asyncio.wait_for(handler_task, timeout=0.1)
                 except (asyncio.CancelledError, TimeoutError):
                     pass  # Expected when we cancel the task
-            
+
             # Ensure monitor task is cancelled
             try:
                 if not monitor_task.done():
