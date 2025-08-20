@@ -23,11 +23,11 @@ import asyncio
 from bubus import EventBus, BaseEvent
 from your_auth_events import AuthRequestEvent, AuthResponseEvent
 
-class UserLoginEvent(BaseEvent):
+class UserLoginEvent(BaseEvent[str]):
     username: str
     is_admin: bool
 
-async def handle_login(event: UserLoginEvent):
+async def handle_login(event: UserLoginEvent) -> str:
     auth_request = await event.event_bus.dispatch(AuthRequestEvent(...))  # nested events supported
     auth_response = await event.event_bus.expect(AuthResponseEvent, timeout=30.0)
     return f"User {event.username} logged in admin={event.is_admin} with API response: {await auth_response.event_result()}"
