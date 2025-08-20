@@ -26,10 +26,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger('bubus')
 
-BUBUS_LOG_LEVEL = os.getenv('BUBUS_LOG_LEVEL', 'WARNING')  # WARNING normally, otherwise DEBUG when testing
+BUBUS_LOGGING_LEVEL = os.getenv('BUBUS_LOGGING_LEVEL', 'WARNING').upper()  # WARNING normally, otherwise DEBUG when testing
 LIBRARY_VERSION = os.getenv('LIBRARY_VERSION', '1.0.0')
 
-logger.setLevel(BUBUS_LOG_LEVEL)
+logger.setLevel(BUBUS_LOGGING_LEVEL)
 
 
 def validate_event_name(s: str) -> str:
@@ -693,23 +693,23 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             # Check if all handler results are done
             all_handlers_done = all(result.status in ('completed', 'error') for result in self.event_results.values())
             if not all_handlers_done:
-                logger.debug(
-                    f'Event {self} not complete - waiting for handlers: {[r for r in self.event_results.values() if r.status not in ("completed", "error")]}'
-                )
+                # logger.debug(
+                #     f'Event {self} not complete - waiting for handlers: {[r for r in self.event_results.values() if r.status not in ("completed", "error")]}'
+                # )
                 return
 
             # Recursively check if all child events are also complete
             if not self.event_are_all_children_complete():
-                incomplete_children = [c for c in self.event_children if c.event_status != 'completed']
-                logger.debug(
-                    f'Event {self} not complete - waiting for {len(incomplete_children)} child events: {incomplete_children}'
-                )
+                # incomplete_children = [c for c in self.event_children if c.event_status != 'completed']
+                # logger.debug(
+                #     f'Event {self} not complete - waiting for {len(incomplete_children)} child events: {incomplete_children}'
+                # )
                 return
 
             # All handlers and all child events are done
             if hasattr(self, 'event_processed_at'):
                 self.event_processed_at = datetime.now(UTC)
-            logger.debug(f'Event {self} marking complete - all handlers and children done')
+            # logger.debug(f'Event {self} marking complete - all handlers and children done')
             self.event_completed_signal.set()
 
     def event_are_all_children_complete(self, _visited: set[str] | None = None) -> bool:

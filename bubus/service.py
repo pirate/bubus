@@ -17,7 +17,7 @@ from uuid_extensions import uuid7str  # pyright: ignore[reportMissingImports, re
 uuid7str: Callable[[], str] = uuid7str  # pyright: ignore
 
 from bubus.models import (
-    BUBUS_LOG_LEVEL,
+    BUBUS_LOGGING_LEVEL,
     AsyncEventHandlerClassMethod,
     AsyncEventHandlerFunc,
     AsyncEventHandlerMethod,
@@ -37,7 +37,7 @@ from bubus.models import (
 )
 
 logger = logging.getLogger('bubus')
-logger.setLevel(BUBUS_LOG_LEVEL)
+logger.setLevel(BUBUS_LOGGING_LEVEL)
 
 
 # Define our own QueueShutDown exception
@@ -1143,7 +1143,7 @@ class EventBus:
                 raise ValueError(f'Handler {get_handler_name(handler)} must be a sync or async function, got: {type(handler)}')
 
             logger.debug(
-                f'    ↳ Handler {get_handler_name(handler)}#{handler_id[-4:]} returned: {type(result_value).__name__} {result_value}'  # pyright: ignore
+                f'    ↳ Handler {get_handler_name(handler)}#{handler_id[-4:]} returned: {type(result_value).__name__} {str(result_value)[:26]}...'  # pyright: ignore
             )
             # Cancel the monitor task since handler completed successfully
             monitor_task.cancel()
