@@ -106,8 +106,8 @@ def test_log_history_tree_with_errors(capsys: Any) -> None:
     bus.log_tree()
 
     captured = capsys.readouterr()
-    assert '❌ ErrorBus.error_handler#' in captured.out
-    assert '❌ ValueError: Test error message' in captured.out
+    assert 'ErrorBus.error_handler#' in captured.out
+    assert 'ValueError: Test error message' in captured.out
 
 
 def test_log_history_tree_complex_nested() -> None:

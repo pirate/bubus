@@ -511,7 +511,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             )
 
         if raise_if_none and not included_results:
-            raise Exception(
+            raise ValueError(
                 f'Expected at least one handler to return a non-None result, but none did! {self} -> {self.event_results}'
             )
 
@@ -607,7 +607,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             # check for event results trampling each other / conflicting
             overlapping_keys: set[str] = merged_results.keys() & event_result.result.keys()  # type: ignore
             if raise_if_conflicts and overlapping_keys:  # type: ignore
-                raise Exception(
+                raise ValueError(
                     f'Event handler {event_result.handler_name} returned a dict with keys that would overwrite values from previous handlers: {overlapping_keys} (pass raise_if_conflicts=False to merge with last-handler-wins)'
                 )  # type: ignore
 
@@ -763,7 +763,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         from bubus.service import EventBus, inside_handler_context
 
         if not inside_handler_context.get():
-            raise RuntimeError('event_bus property can only be accessed from within an event handler')
+            raise AttributeError('event_bus property can only be accessed from within an event handler')
 
         # The event_path contains all buses this event has passed through
         # The last one in the path is the one currently processing
@@ -871,7 +871,7 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
                 await asyncio.wait_for(self.handler_completed_signal.wait(), timeout=self.timeout)
             except TimeoutError:
                 # self.handler_completed_signal.clear()
-                raise RuntimeError(f'Event handler {self.eventbus_name}.{self.handler_name}(#{self.event_id[-4:]}) timed out after {self.timeout}s')
+                raise TimeoutError(f'Event handler {self.eventbus_name}.{self.handler_name}(#{self.event_id[-4:]}) timed out after {self.timeout}s')
 
             if self.status == 'error' and self.error:
                 raise self.error if isinstance(self.error, BaseException) else Exception(self.error)  # pyright: ignore[reportUnnecessaryIsInstance]

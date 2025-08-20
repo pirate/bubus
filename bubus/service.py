@@ -342,7 +342,7 @@ class EventBus:
         EventBus.all_instances.add(self)
 
         # Instead of registering as normal event handlers,
-        # these special handlers are just called manually at the end of execute_event
+        # these special handlers are just called manually at the end of step
         # self.on('*', self._default_log_handler)
         # self.on('*', self._default_wal_handler)
 
@@ -730,7 +730,7 @@ class EventBus:
                     queue_size = 50 if self.max_history_size is not None else 0  # 0 = unlimited
                     self.event_queue = CleanShutdownQueue['BaseEvent[Any]'](maxsize=queue_size)
                     self._on_idle = asyncio.Event()
-                    self._on_idle.clear()  # Start in a busy state unless we confirm queue is empty by running execute_event() at least once
+                    self._on_idle.clear()  # Start in a busy state unless we confirm queue is empty by running step() at least once
 
                 # Create and start the run loop task
                 self._runloop_task = loop.create_task(self._run_loop(), name=f'{self}._run_loop')
@@ -770,6 +770,8 @@ class EventBus:
         # Shutdown the queue to unblock any pending get() operations
         if self.event_queue:
             self.event_queue.shutdown()
+
+        print('STOPPING', self.event_history)
 
         # Wait for the run loop task to finish / force-cancel it if it's hanging
         if self._runloop_task and not self._runloop_task.done():
@@ -864,7 +866,7 @@ class EventBus:
         try:
             while self._is_running:
                 try:
-                    _processed_event = await self.execute_event()
+                    _processed_event = await self.step()
                     # Check if we should set idle state after processing
                     if self._on_idle and self.event_queue:
                         if not (self.events_pending or self.events_started or self.event_queue.qsize()):
@@ -924,11 +926,11 @@ class EventBus:
             # Clean cancellation during shutdown or queue was shut down
             return None
 
-    async def execute_event(
+    async def step(
         self, event: 'BaseEvent[Any] | None' = None, timeout: float | None = None, wait_for_timeout: float = 0.1
     ) -> 'BaseEvent[Any] | None':
         """Process a single event from the queue"""
-        assert self._on_idle and self.event_queue, 'EventBus._start() must be called before execute_event()'
+        assert self._on_idle and self.event_queue, 'EventBus._start() must be called before step()'
 
         # Track if we got the event from the queue
         from_queue = False
@@ -940,7 +942,7 @@ class EventBus:
         if event is None:
             return None
 
-        logger.debug(f'🏃 {self}.execute_event({event}) STARTING')
+        logger.debug(f'🏃 {self}.step({event}) STARTING')
 
         # Clear idle state when we get an event
         self._on_idle.clear()
@@ -954,7 +956,7 @@ class EventBus:
             if from_queue:
                 self.event_queue.task_done()
 
-        logger.debug(f'✅ {self}.execute_event({event}) COMPLETE')
+        logger.debug(f'✅ {self}.step({event}) COMPLETE')
         return event
 
     async def process_event(self, event: 'BaseEvent[Any]', timeout: float | None = None) -> None:
@@ -1165,7 +1167,8 @@ class EventBus:
             monitor_task.cancel()
             
             # Create a RuntimeError for timeout
-            handler_interrupted_error = asyncio.CancelledError(f'Event handler {get_handler_name(handler)}#{handler_id[-4:]}({event}) was cancelled because of a timeout')
+            # TODO: figure out why it breaks when we try to switch to InterruptedError instead of asyncio.CancelledError
+            handler_interrupted_error = asyncio.CancelledError(f'Event handler {get_handler_name(handler)}#{handler_id[-4:]}({event}) was interrupted because of a parent timeout')
             event.event_result_update(handler=handler, eventbus=self, error=handler_interrupted_error)
             
             # import ipdb; ipdb.set_trace()
@@ -1177,7 +1180,7 @@ class EventBus:
             
             # Create a RuntimeError for timeout
             children = f' and interrupted any processing of {len(event.event_children)} child events' if event.event_children else ''
-            handler_timeout_error = RuntimeError(f'Event handler {get_handler_name(handler)}#{handler_id[-4:]}({event}) timed out after {event_result.timeout}s{children}')
+            handler_timeout_error = TimeoutError(f'Event handler {get_handler_name(handler)}#{handler_id[-4:]}({event}) timed out after {event_result.timeout}s{children}')
             event.event_result_update(handler=handler, eventbus=self, error=handler_timeout_error)
             event.event_cancel_pending_child_processing(handler_timeout_error)
             

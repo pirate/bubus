@@ -1,6 +1,7 @@
 """Helper functions for logging event trees and formatting"""
 
 import asyncio
+import math
 from collections import defaultdict
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -225,6 +226,7 @@ def log_timeout_tree(event: 'BaseEvent[Any]', timed_out_result: 'EventResult[Any
         is_expired: bool = False,
         is_interrupted: bool = False,
         is_pending: bool = False,
+        error_type: str | None = None,
     ):
         """Print a formatted handler line with proper column alignment"""
         
@@ -233,10 +235,12 @@ def log_timeout_tree(event: 'BaseEvent[Any]', timed_out_result: 'EventResult[Any
             col2_icon = '☑️'
         elif is_pending:
             col2_icon = '🔚'
+        elif status == 'started' or is_interrupted:
+            col2_icon = '➡️'
+        elif is_expired:
+            col2_icon = '⏰'
         elif status == 'error':
             col2_icon = '❌'
-        elif status == 'started':
-            col2_icon = '➡️'
         else:
             col2_icon = '🔜'
     
@@ -248,28 +252,28 @@ def log_timeout_tree(event: 'BaseEvent[Any]', timed_out_result: 'EventResult[Any
         col4_padding = ' ' * max(1, 64 - len(f'{handler_indent}   {col3_desc}'))  # assume icons are always 2 chars wide
         
         # Col 5-10: timing info
+        max_time = timeout or 0
         if started_at:
             elapsed_time = ((completed_at or now) - started_at).total_seconds()
-            max_time = round(timeout or 0)
             
             if is_expired or (elapsed_time >= max_time):
                 col5_timing_icon = '⌛️'
                 if is_expired:
-                    col9_extra = f'    ⬅️ {red}TIMEOUT HERE{reset} ⏰'
+                    col9_extra = f' ⬅️ {red}TIMEOUT HERE{reset} ⏰'
                 else:
-                    col9_extra = f'    ☠️ {pink}FAILED{reset}'   # timed out before us, but unrelated to current timeout exception chain, not the direct cause of our current error
+                    col9_extra = f' ☠️ {pink}{error_type or "FAILED"}{reset}'   # timed out before us, but unrelated to current timeout exception chain, not the direct cause of our current error
             elif is_interrupted and is_pending:
                 col5_timing_icon = '  '
-                col9_extra = f'    ⛔️ {pink}SKIPPED{reset}'
+                col9_extra = f' ⛔️ {pink}{error_type or "AbortedError"}{reset}'
             elif is_interrupted:
                 col5_timing_icon = '⏳'
-                col9_extra = f'    ⬅️ {yellow}INTERRUPTED{reset} ✂️'
+                col9_extra = f' ⬅️ {yellow}INTERRUPTED{reset} ✂️'
             elif status == 'started':
                 col5_timing_icon = '⏳'
                 col9_extra = ''
             else:
                 col5_timing_icon = '  '
-                col9_extra = ''
+                col9_extra = ' ✓' if status == 'completed' else '    ✗'
             
             if elapsed_time >= max_time and not is_pending:
                 col6_elapsed = f'{red}{round(elapsed_time):2d}s{reset}'
@@ -286,15 +290,15 @@ def log_timeout_tree(event: 'BaseEvent[Any]', timed_out_result: 'EventResult[Any
             
             col7_slash = '/'
             if is_expired or elapsed_time >= max_time:
-                col8_max = f'{red}{max_time:2d}s{reset}'
+                col8_max = f'{red}{math.ceil(timeout or 0):2d}s{reset}'
             else:
-                col8_max = f'{max_time:2d}s'
+                col8_max = f'{math.ceil(timeout or 0):2d}s'
         else:
             # Never started - pending
             col5_timing_icon = '🔜'
             col6_elapsed = '   '
             col7_slash = '/'
-            col8_max = f'{round(timeout or 0):2d}s'
+            col8_max = f'{math.ceil(timeout or 0):2d}s'
             col9_extra = ''
         
         # Assemble and print
@@ -370,6 +374,7 @@ def log_timeout_tree(event: 'BaseEvent[Any]', timed_out_result: 'EventResult[Any
                 is_expired=is_expired,
                 is_interrupted=is_interrupted,
                 is_pending='pending' in str(result.error),
+                error_type=type(result.error).__name__ if result.error else None,
             )
             
             # Print child events dispatched by this handler
