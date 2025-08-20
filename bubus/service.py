@@ -761,7 +761,7 @@ class EventBus:
         if queue_size or self.events_pending or self.events_started:
             logger.debug(
                 f'⚠️ {self} stopping with pending events: Pending {len(self.events_pending) + queue_size} | Started {len(self.events_started)} | Completed {len(self.events_completed)}\n'
-                f'PENDING={self.events_pending}\nSTARTED={self.events_started}'
+                f'PENDING={str(self.events_pending)[:500]}\nSTARTED={str(self.events_started)[:500]}'
             )
 
         # Signal shutdown
@@ -771,7 +771,7 @@ class EventBus:
         if self.event_queue:
             self.event_queue.shutdown()
 
-        print('STOPPING', self.event_history)
+        # print('STOPPING', self.event_history)
 
         # Wait for the run loop task to finish / force-cancel it if it's hanging
         if self._runloop_task and not self._runloop_task.done():
@@ -1430,11 +1430,11 @@ class EventBus:
 
         return len(events_to_remove)
 
-    def log_tree(self) -> None:
+    def log_tree(self) -> str:
         """Print a nice pretty formatted tree view of all events in the history including their results and child events recursively"""
         from bubus.logging import log_eventbus_tree
 
-        log_eventbus_tree(self)
+        return log_eventbus_tree(self)
 
     def _check_total_memory_usage(self) -> None:
         """Check total memory usage across all EventBus instances and warn if >50MB"""

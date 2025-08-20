@@ -38,7 +38,10 @@ def log_event_tree(
     indent: str = '',
     is_last: bool = True,
     child_events_by_parent: dict[str | None, list['BaseEvent[Any]']] | None = None,
-) -> None:
+) -> str:
+
+    from bubus.models import logger
+
     """Print this event and its results with proper tree formatting"""
     # Determine the connector
     connector = '└── ' if is_last else '├── '
@@ -53,7 +56,11 @@ def log_event_tree(
         timing_str += f' ({duration:.3f}s)'
     timing_str += ']'
 
-    print(f'{indent}{connector}{status_icon} {event.event_type}#{event.event_id[-4:]} {timing_str}')
+    lines: list[str] = []
+    
+    event_line = f'{indent}{connector}{status_icon} {event.event_type}#{event.event_id[-4:]} {timing_str}'
+    logger.warning(event_line)
+    lines.append(event_line)
 
     # Calculate the new indent for children
     extension = '    ' if is_last else '│   '
@@ -79,7 +86,7 @@ def log_event_tree(
 
         for i, (_handler_id, result) in enumerate(results_sorted):
             is_last_item = i == total_items - 1
-            log_eventresult_tree(result, new_indent, is_last_item, child_events_by_parent)
+            lines.append(log_eventresult_tree(result, new_indent, is_last_item, child_events_by_parent))
             # Track child events printed by this result
             for child in result.event_children:
                 printed_child_ids.add(child.event_id)
@@ -90,7 +97,9 @@ def log_event_tree(
         for i, child in enumerate(children):
             if child.event_id not in printed_child_ids:
                 is_last_child = i == len(children) - 1
-                log_event_tree(child, new_indent, is_last_child, child_events_by_parent)
+                lines.append(log_event_tree(child, new_indent, is_last_child, child_events_by_parent))
+
+    return '\n'.join(lines)
 
 
 def log_eventresult_tree(
@@ -98,8 +107,11 @@ def log_eventresult_tree(
     indent: str = '',
     is_last: bool = True,
     child_events_by_parent: dict[str | None, list['BaseEvent[Any]']] | None = None,
-) -> None:
+) -> str:
     """Print this result and its child events with proper tree formatting"""
+
+    from bubus.models import logger
+
     # Determine the connector
     connector = '└── ' if is_last else '├── '
 
@@ -134,21 +146,28 @@ def log_eventresult_tree(
     elif result.status == 'completed':
         result_line += f' → {format_result_value(result.result)}'
 
-    print(result_line)
+    lines: list[str] = []
+    logger.warning(result_line)
+    lines.append(result_line)
 
     # Calculate the new indent for child events
     extension = '    ' if is_last else '│   '
     new_indent = indent + extension
 
     # Print child events dispatched by this handler
+    
     if result.event_children:
         for i, child in enumerate(result.event_children):
             is_last_child = i == len(result.event_children) - 1
-            log_event_tree(child, new_indent, is_last_child, child_events_by_parent)
+            lines.append(log_event_tree(child, new_indent, is_last_child, child_events_by_parent))
+
+    return '\n'.join(lines)
 
 
-def log_eventbus_tree(eventbus: 'EventBus') -> None:
+def log_eventbus_tree(eventbus: 'EventBus') -> str:
     """Print a nice pretty formatted tree view of all events in the history including their results and child events recursively"""
+
+    from bubus.models import logger
 
     # Build a mapping of parent_id to child events
     parent_to_children: dict[str | None, list['BaseEvent[Any]']] = defaultdict(list)
@@ -172,19 +191,22 @@ def log_eventbus_tree(eventbus: 'EventBus') -> None:
                     e for e in parent_to_children[event.event_id] if e.event_id != event.event_id
                 ]
 
-    print(f'\n📊 Event History Tree for {eventbus}')
-    print('=' * 80)
+    logger.warning(f'📊 Event History Tree for {eventbus}')
+    logger.warning('=' * 80)
 
     if not root_events:
-        print('  (No events in history)')
-        return
+        logger.warning('  (No events in history)')
+        return '(No events in history)'
 
     # Print all root events using their log_tree helper method
+    lines: list[str] = []
     for i, event in enumerate(root_events):
         is_last = i == len(root_events) - 1
-        log_event_tree(event, '', is_last, parent_to_children)
+        lines.append(log_event_tree(event, '', is_last, parent_to_children))
 
-    print('=' * 80)
+    logger.warning('=' * 80)
+
+    return '\n'.join(lines)
 
 
 def log_timeout_tree(event: 'BaseEvent[Any]', timed_out_result: 'EventResult[Any]') -> None:
