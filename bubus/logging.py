@@ -39,7 +39,6 @@ def log_event_tree(
     is_last: bool = True,
     child_events_by_parent: dict[str | None, list['BaseEvent[Any]']] | None = None,
 ) -> str:
-
     from bubus.models import logger
 
     """Print this event and its results with proper tree formatting"""
@@ -57,7 +56,7 @@ def log_event_tree(
     timing_str += ']'
 
     lines: list[str] = []
-    
+
     event_line = f'{indent}{connector}{status_icon} {event.event_type}#{event.event_id[-4:]} {timing_str}'
     logger.warning(event_line)
     lines.append(event_line)
@@ -155,7 +154,7 @@ def log_eventresult_tree(
     new_indent = indent + extension
 
     # Print child events dispatched by this handler
-    
+
     if result.event_children:
         for i, child in enumerate(result.event_children):
             is_last_child = i == len(result.event_children) - 1

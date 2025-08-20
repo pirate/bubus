@@ -1,8 +1,6 @@
 """Test the EventBus.log_tree() method"""
 
-import sys
 from datetime import UTC, datetime
-from io import StringIO
 from typing import Any
 
 from bubus import BaseEvent, EventBus, EventResult
