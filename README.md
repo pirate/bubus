@@ -974,6 +974,7 @@ uv run pytest tests/test_eventbus.py
 - https://github.com/n89nanda/pyeventbus
 - https://github.com/iunary/aioemit
 - https://github.com/dboslee/evently
+- https://github.com/faust-streaming/faust
 - https://github.com/ArcletProject/Letoderea
 - https://github.com/seanpar203/event-bus
 - https://github.com/n89nanda/pyeventbus
