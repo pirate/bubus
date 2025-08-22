@@ -587,6 +587,28 @@ class EventBus:
 
         return event
 
+    def _is_child_of_event(self, event: 'BaseEvent[Any]', parent_event: 'BaseEvent[Any]') -> bool:
+        """Check if event is a child (descendant) of parent_event by walking the event tree."""
+        def _walk_children(current_parent: 'BaseEvent[Any]', visited: set[str] | None = None) -> bool:
+            if visited is None:
+                visited = set()
+            
+            # Prevent infinite recursion on circular references
+            if current_parent.event_id in visited:
+                return False
+            visited.add(current_parent.event_id)
+            
+            # Check direct children
+            for child in current_parent.event_children:
+                if child.event_id == event.event_id:
+                    return True
+                # Recursively check grandchildren
+                if _walk_children(child, visited):
+                    return True
+            return False
+        
+        return _walk_children(parent_event)
+
     @overload
     async def expect(
         self,
@@ -595,6 +617,8 @@ class EventBus:
         exclude: Callable[['BaseEvent[Any]' | T_ExpectedEvent], bool] = lambda _: False,
         predicate: Callable[['BaseEvent[Any]' | T_ExpectedEvent], bool] = lambda _: True,  # deprecated, alias for include
         timeout: float | None = None,
+        child_of: 'BaseEvent[Any] | None' = None,
+        past: bool = False,
     ) -> T_ExpectedEvent: ...
 
     @overload
@@ -605,6 +629,8 @@ class EventBus:
         exclude: Callable[['BaseEvent[Any]'], bool] = lambda _: False,
         predicate: Callable[['BaseEvent[Any]'], bool] = lambda _: True,  # deprecated, alias for include
         timeout: float | None = None,
+        child_of: 'BaseEvent[Any] | None' = None,
+        past: bool = False,
     ) -> 'BaseEvent[Any]': ...
 
     async def expect(
@@ -614,6 +640,8 @@ class EventBus:
         exclude: Callable[['BaseEvent[Any]'], bool] = lambda _: False,
         predicate: Callable[['BaseEvent[Any]'], bool] = lambda _: True,  # deprecated, alias for include
         timeout: float | None = None,
+        child_of: 'BaseEvent[Any] | None' = None,
+        past: bool = False,
     ) -> 'BaseEvent[Any]' | T_ExpectedEvent:
         """
         Wait for an event matching the given type/pattern with optional filters.
@@ -624,6 +652,8 @@ class EventBus:
                 exclude: Filter function that must return False for the event to match (default: lambda e: False)
                 predicate: Deprecated name, alias for include (default: lambda e: True)
                 timeout: Maximum time to wait in seconds as a float (None = wait forever)
+                child_of: If provided, only include events that are child events nested somewhere under the provided parent event (uses event.event_children to walk the tree)
+                past: If True, look through the list of recent events in .event_history for a matching event instead of awaiting future events (default: False)
 
         Returns:
                 The first matching event
@@ -648,6 +678,13 @@ class EventBus:
                         exclude=lambda e: e.error_code is not None,
                         timeout=30
                 )
+
+                # Wait for child event of a parent
+                nav_event = await eventbus.dispatch(NavigateToUrlEvent(url='about:blank', new_tab=True))
+                new_tab = await eventbus.expect(TabCreatedEvent, child_of=nav_event)
+
+                # Look for recent event in history 
+                recent_tab = await eventbus.expect(TabCreatedEvent, child_of=nav_event, past=True)
         """
         future: asyncio.Future['BaseEvent[Any]'] = asyncio.Future()
 
@@ -656,9 +693,42 @@ class EventBus:
             original_include = include
             include = lambda e, orig=original_include, pred=predicate: orig(e) and pred(e)
 
+        # Create enhanced filter that includes child_of check
+        def enhanced_filter(event: 'BaseEvent[Any]') -> bool:
+            """Enhanced filter that applies all conditions: include, exclude, child_of"""
+            # Apply basic filters first
+            if not include(event) or exclude(event):
+                return False
+            
+            # Apply child_of filter if provided
+            if child_of is not None:
+                if not self._is_child_of_event(event, child_of):
+                    return False
+            
+            return True
+
+        # If past=True, search event history first
+        if past:
+            # Determine event key for matching
+            event_key: str = event_type.__name__ if isinstance(event_type, type) else str(event_type)
+            
+            # Search through event history for matching events
+            for event in self.event_history.values():
+                # Check if event type matches
+                if event_key != '*' and event.event_type != event_key:
+                    continue
+                
+                # Apply enhanced filter
+                if enhanced_filter(event):
+                    return event
+            
+            # If no matching past event found and timeout is 0, raise TimeoutError immediately
+            if timeout == 0:
+                raise asyncio.TimeoutError(f'No matching event found in history for {event_type}')
+
         def notify_expect_handler(event: 'BaseEvent[Any]') -> None:
             """Handler that resolves the future when a matching event is found"""
-            if not future.done() and include(event) and not exclude(event):
+            if not future.done() and enhanced_filter(event):
                 future.set_result(event)
 
         # make debugging otherwise ephemeral async expect handlers easier by including some metadata in the stacktrace func names
