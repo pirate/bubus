@@ -882,6 +882,8 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
 
             return self.result
 
+        # do not re-raise exceptions here for now, just return the event in all cases and let the caller handle checking event.error or event.result
+
         return wait_for_handler_to_complete_and_return_result().__await__()
 
     def update(self, **kwargs: Any) -> Self:

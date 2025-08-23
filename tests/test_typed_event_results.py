@@ -1,8 +1,10 @@
 """Test typed event results with automatic casting."""
 
 import asyncio
+from typing import Any
 
 from pydantic import BaseModel
+from typing_extensions import assert_type
 
 from bubus import BaseEvent, EventBus
 
@@ -170,6 +172,125 @@ async def test_result_type_stored_in_event_result():
     await bus.stop(clear=True)
 
 
+async def test_expect_type_inference():
+    """Test that EventBus.expect() returns the correct typed event."""
+    print('\n=== Test Expect Type Inference ===')
+
+    bus = EventBus(name='expect_type_test_bus')
+
+    class CustomResult(BaseModel):
+        data: str
+
+    class SpecificEvent(BaseEvent[CustomResult]):
+        request_id: str = 'test123'
+
+    # Start a task that will dispatch the event
+    async def dispatch_later():
+        await asyncio.sleep(0.01)
+        bus.dispatch(SpecificEvent(request_id='req456'))
+
+    dispatch_task = asyncio.create_task(dispatch_later())
+
+    # Use expect with the event class - should return SpecificEvent type
+    expected_event = await bus.expect(SpecificEvent, timeout=1.0)
+
+    # Type checking - this should work without cast
+    assert_type(expected_event, SpecificEvent)  # Verify type is SpecificEvent, not BaseEvent[Any]
+    
+    # Runtime check
+    assert type(expected_event) is SpecificEvent
+    assert expected_event.request_id == 'req456'
+
+    # Test with filters - type should still be preserved
+    async def dispatch_multiple():
+        await asyncio.sleep(0.01)
+        bus.dispatch(SpecificEvent(request_id='wrong'))
+        bus.dispatch(SpecificEvent(request_id='correct'))
+
+    dispatch_task2 = asyncio.create_task(dispatch_multiple())
+
+    # Expect with include filter
+    filtered_event = await bus.expect(
+        SpecificEvent,
+        include=lambda e: e.request_id == 'correct',  # type: ignore
+        timeout=1.0
+    )
+
+    assert_type(filtered_event, SpecificEvent)  # Should still be SpecificEvent
+    assert type(filtered_event) is SpecificEvent
+    assert filtered_event.request_id == 'correct'
+
+    # Test with string event type - returns BaseEvent[Any]
+    async def dispatch_string_event():
+        await asyncio.sleep(0.01)
+        bus.dispatch(BaseEvent(event_type='StringEvent'))
+
+    dispatch_task3 = asyncio.create_task(dispatch_string_event())
+    string_event = await bus.expect('StringEvent', timeout=1.0)
+
+    assert_type(string_event, BaseEvent[Any])  # Should be BaseEvent[Any]
+    assert string_event.event_type == 'StringEvent'
+
+    await dispatch_task
+    await dispatch_task2
+    await dispatch_task3
+
+    print(f'✅ Expect correctly preserved type: {type(expected_event).__name__}')
+    print(f'✅ Expect with filter preserved type: {type(filtered_event).__name__}')
+    print('✅ No cast() needed for expect() - type inference works!')
+    await bus.stop(clear=True)
+
+
+async def test_dispatch_type_inference():
+    """Test that EventBus.dispatch() returns the same type as its input."""
+    print('\n=== Test Dispatch Type Inference ===')
+
+    bus = EventBus(name='type_inference_test_bus')
+
+    class CustomResult(BaseModel):
+        value: str
+
+    class CustomEvent(BaseEvent[CustomResult]):
+        pass
+
+    # Create an event instance
+    original_event = CustomEvent()
+
+    # Dispatch should return the same type WITHOUT needing cast()
+    dispatched_event = bus.dispatch(original_event)
+
+    # Type checking - this should work without cast
+    assert_type(dispatched_event, CustomEvent)  # Should be CustomEvent, not BaseEvent[Any]
+
+    # Runtime check
+    assert type(dispatched_event) is CustomEvent
+    assert dispatched_event is original_event  # Should be the same object
+
+    # The returned event should be fully typed
+    async def handler(event: CustomEvent) -> CustomResult:
+        return CustomResult(value='test')
+
+    bus.on('CustomEvent', handler)
+
+    # We should be able to use it without casting
+    result = await dispatched_event.event_result()
+
+    # Type checking for the result
+    assert_type(result, CustomResult | None)  # Should be CustomResult | None
+
+    # Test that we can access type-specific attributes without cast
+    # This would fail type checking if dispatched_event was BaseEvent[Any]
+    assert dispatched_event.event_type == 'CustomEvent'
+
+    # Demonstrate the improvement - no cast needed!
+    # Before: event = cast(CustomEvent, bus.dispatch(CustomEvent()))
+    # After: event = bus.dispatch(CustomEvent())  # Type is preserved!
+
+    print(f'✅ Dispatch correctly preserved type: {type(dispatched_event).__name__}')
+    print('✅ No cast() needed - type inference works!')
+    await bus.stop(clear=True)
+
+
 async def test_typed_event_results():
     """Run all typed event result tests."""
     await test_pydantic_model_result_casting()
@@ -177,6 +298,8 @@ async def test_typed_event_results():
     await test_casting_failure_handling()
     await test_no_casting_when_no_result_type()
     await test_result_type_stored_in_event_result()
+    await test_expect_type_inference()
+    await test_dispatch_type_inference()
     print('\n🎉 All typed event result tests passed!')
 
 

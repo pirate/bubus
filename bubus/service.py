@@ -482,10 +482,10 @@ class EventBus:
         self.handlers[event_key].append(handler)  # type: ignore
         logger.debug(f'👂 {self}.on({event_key}, {get_handler_name(handler)}) Registered event handler')
 
-    def dispatch(self, event: 'BaseEvent[Any]') -> 'BaseEvent[Any]':
+    def dispatch(self, event: T_ExpectedEvent) -> T_ExpectedEvent:
         """
         Enqueue an event for processing and immediately return an Event(status='pending') version (synchronous).
-        You can then await the Event(status='pending') object to block until its Event(status='completed') versionis ready,
+        You can await the returned Event(status='pending') object to block until it is done being executed aka Event(status='completed'),
         or you can interact with the unawaited Event(status='pending') before its handlers have finished.
 
         (The first EventBus.dispatch() call will auto-start a bus's async _run_loop() if it's not already running)
