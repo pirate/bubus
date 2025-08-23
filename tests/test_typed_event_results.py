@@ -1,10 +1,9 @@
 """Test typed event results with automatic casting."""
 
 import asyncio
-from typing import Any
+from typing import Any, assert_type
 
 from pydantic import BaseModel
-from typing_extensions import assert_type
 
 from bubus import BaseEvent, EventBus
 
@@ -196,7 +195,7 @@ async def test_expect_type_inference():
 
     # Type checking - this should work without cast
     assert_type(expected_event, SpecificEvent)  # Verify type is SpecificEvent, not BaseEvent[Any]
-    
+
     # Runtime check
     assert type(expected_event) is SpecificEvent
     assert expected_event.request_id == 'req456'
@@ -213,7 +212,7 @@ async def test_expect_type_inference():
     filtered_event = await bus.expect(
         SpecificEvent,
         include=lambda e: e.request_id == 'correct',  # type: ignore
-        timeout=1.0
+        timeout=1.0,
     )
 
     assert_type(filtered_event, SpecificEvent)  # Should still be SpecificEvent
