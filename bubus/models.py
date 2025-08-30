@@ -506,9 +506,17 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 
         if raise_if_any and error_results:
             failing_handler, failing_result = list(error_results.items())[0]  # throw first error
-            raise Exception(
-                f'Event handler {failing_handler}({self}) returned an error -> {failing_result.error or cast(Any, failing_result.result)}'
-            )
+            original_error = failing_result.error or cast(Any, failing_result.result)
+
+            # Log the handler context information instead of wrapping the exception
+            logger.debug(f'Event handler {failing_handler}({self}) returned an error -> {original_error}')
+
+            # Re-raise the original exception to preserve its type and structured data
+            if isinstance(original_error, BaseException):
+                raise original_error
+            else:
+                # Fallback for non-exception errors (shouldn't happen in practice)
+                raise Exception(str(original_error))
 
         if raise_if_none and not included_results:
             raise ValueError(
