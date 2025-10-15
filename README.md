@@ -762,6 +762,17 @@ long_lists = await event.event_results_flat_list(include=lambda r: isinstance(r.
 all_items = await event.event_results_flat_list(raise_if_any=False, raise_if_none=False)
 ```
 
+##### `event_create_pending_results(handlers: dict[str, EventHandler], eventbus: EventBus | None = None, timeout: float | None = None) -> dict[str, EventResult]`
+
+Create (or reset) the `EventResult` placeholders for the provided handlers. The `EventBus` uses this internally before it begins executing handlers so that the event's state is immediately visible. Advanced users can call it when coordinating handler execution manually.
+
+```python
+applicable_handlers = bus._get_applicable_handlers(event)  # internal helper shown for illustration
+pending_results = event.event_create_pending_results(applicable_handlers, eventbus=bus)
+
+assert all(result.status == 'pending' for result in pending_results.values())
+```
+
 ##### `event_bus` (property)
 
 Shortcut to get the `EventBus` that is currently processing this event. Can be used to avoid having to pass an `EventBus` instance to your handlers.
@@ -785,7 +796,7 @@ async def some_handler(event: MyEvent):
 The placeholder object that represents the pending result from a single handler executing an event.  
 `Event.event_results` contains a `dict[PythonIdStr, EventResult]` in the shape of `{handler_id: EventResult()}`.
 
-You shouldn't need to ever directly use this class, it's an internal wrapper to track pending and completed results from each handler within `BaseEvent.event_results`.
+You generally won't interact with this class directly—the bus instantiates and updates it for you—but its API is documented here for advanced integrations and custom dispatch loops.
 
 #### `EventResult` Fields
 
@@ -804,7 +815,7 @@ class EventResult(BaseModel):
     started_at: datetime      # When handler started
     completed_at: datetime    # When handler completed
     timeout: float            # Handler timeout in seconds
-    child_events: list[BaseEvent] # list of child events emitted during handler execution
+    event_children: list[BaseEvent] # child events emitted during handler execution
 ```
 
 #### `EventResult` Methods
@@ -817,6 +828,9 @@ Await the `EventResult` object directly to get the raw result value.
 handler_result = event.event_results['handler_id']
 value = await handler_result  # Returns result or raises an exception if handler hits an error
 ```
+
+- `execute(event, handler, *, eventbus, timeout, enter_context, exit_context, log_filtered_traceback)`  
+  Low-level helper that runs the handler, updates timing/status fields, captures errors, and notifies its completion signal. `EventBus.execute_handler()` delegates to this; you generally only need it when building a custom bus or integrating the event system into another dispatcher.
 
 ---
 
