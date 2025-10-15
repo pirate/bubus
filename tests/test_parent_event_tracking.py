@@ -41,13 +41,13 @@ class TestParentEventTracking:
 
     async def test_basic_parent_tracking(self, eventbus: EventBus):
         """Test that child events automatically get event_parent_id"""
-        child_events: list[BaseEvent[Any]] = []
+        event_children: list[BaseEvent[Any]] = []
 
         async def parent_handler(event: ParentEvent) -> str:
             # Handler that dispatches a child event
             child = ChildEvent(data=f'child_of_{event.message}')
             eventbus.dispatch(child)
-            child_events.append(child)
+            event_children.append(child)
             return 'parent_handled'
 
         eventbus.on('ParentEvent', parent_handler)  # type: ignore[reportUnknownArgumentType]
@@ -67,8 +67,8 @@ class TestParentEventTracking:
         assert parent_handler_result is not None and parent_handler_result.result == 'parent_handled'
 
         # Verify child has event_parent_id set
-        assert len(child_events) == 1
-        child = child_events[0]
+        assert len(event_children) == 1
+        child = event_children[0]
         assert child.event_parent_id == parent.event_id
 
     async def test_multi_level_parent_tracking(self, eventbus: EventBus):
@@ -115,14 +115,14 @@ class TestParentEventTracking:
 
     async def test_multiple_children_same_parent(self, eventbus: EventBus):
         """Test multiple child events from same parent"""
-        child_events: list[BaseEvent[Any]] = []
+        event_children: list[BaseEvent[Any]] = []
 
         async def parent_handler(event: BaseEvent[str]) -> str:
             # Dispatch multiple children
             for i in range(3):
                 child = ChildEvent(data=f'child_{i}')
                 eventbus.dispatch(child)
-                child_events.append(child)
+                event_children.append(child)
             return 'spawned_children'
 
         eventbus.on('ParentEvent', parent_handler)
@@ -134,8 +134,8 @@ class TestParentEventTracking:
         await eventbus.wait_until_idle()
 
         # All children should have same parent
-        assert len(child_events) == 3
-        for child in child_events:
+        assert len(event_children) == 3
+        for child in event_children:
             assert child.event_parent_id == parent.event_id
 
     async def test_parallel_handlers_parent_tracking(self, eventbus: EventBus):
@@ -240,13 +240,13 @@ class TestParentEventTracking:
 
     async def test_sync_handler_parent_tracking(self, eventbus: EventBus):
         """Test parent tracking works with sync handlers"""
-        child_events: list[BaseEvent[Any]] = []
+        event_children: list[BaseEvent[Any]] = []
 
         def sync_parent_handler(event: BaseEvent[str]) -> str:
             # Sync handler that dispatches child
             child = ChildEvent(data='from_sync')
             eventbus.dispatch(child)
-            child_events.append(child)
+            event_children.append(child)
             return 'sync_handled'
 
         eventbus.on('ParentEvent', sync_parent_handler)
@@ -257,18 +257,18 @@ class TestParentEventTracking:
         await eventbus.wait_until_idle()
 
         # Parent tracking should work even with sync handlers
-        assert len(child_events) == 1
-        assert child_events[0].event_parent_id == parent.event_id
+        assert len(event_children) == 1
+        assert event_children[0].event_parent_id == parent.event_id
 
     async def test_error_handler_parent_tracking(self, eventbus: EventBus):
         """Test parent tracking when handler errors occur"""
-        child_events: list[BaseEvent[Any]] = []
+        event_children: list[BaseEvent[Any]] = []
 
         async def failing_handler(event: BaseEvent[str]) -> str:
             # Dispatch child before failing
             child = ChildEvent(data='before_error')
             eventbus.dispatch(child)
-            child_events.append(child)
+            event_children.append(child)
             raise ValueError(
                 'Handler error - expected to fail - testing that parent event tracking works even when handlers error'
             )
@@ -277,7 +277,7 @@ class TestParentEventTracking:
             # This should still run
             child = ChildEvent(data='after_error')
             eventbus.dispatch(child)
-            child_events.append(child)
+            event_children.append(child)
             return 'success'
 
         eventbus.on('ParentEvent', failing_handler)
@@ -289,8 +289,8 @@ class TestParentEventTracking:
         await eventbus.wait_until_idle()
 
         # Both children should have event_parent_id despite error
-        assert len(child_events) == 2
-        for child in child_events:
+        assert len(event_children) == 2
+        for child in event_children:
             assert child.event_parent_id == parent.event_id
 
     async def test_event_children_tracking(self, eventbus: EventBus):

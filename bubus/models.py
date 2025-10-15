@@ -796,12 +796,12 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         self,
         indent: str = '',
         is_last: bool = True,
-        child_events_by_parent: 'dict[str | None, list[BaseEvent[Any]]] | None' = None,
+        event_children_by_parent: 'dict[str | None, list[BaseEvent[Any]]] | None' = None,
     ) -> None:
         """Print this event and its results with proper tree formatting"""
         from bubus.logging import log_event_tree
 
-        log_event_tree(self, indent, is_last, child_events_by_parent)
+        log_event_tree(self, indent, is_last, event_children_by_parent)
 
     @property
     def event_bus(self) -> 'EventBus':
@@ -1125,12 +1125,15 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
             _exit(tokens)
 
     def log_tree(
-        self, indent: str = '', is_last: bool = True, child_events_by_parent: dict[str | None, list[BaseEvent[Any]]] | None = None
+        self,
+        indent: str = '',
+        is_last: bool = True,
+        event_children_by_parent: dict[str | None, list[BaseEvent[Any]]] | None = None,
     ) -> None:
         """Print this result and its child events with proper tree formatting"""
         from bubus.logging import log_eventresult_tree
 
-        log_eventresult_tree(self, indent, is_last, child_events_by_parent)
+        log_eventresult_tree(self, indent, is_last, event_children_by_parent)
 
 
 # Resolve forward references

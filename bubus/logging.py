@@ -37,7 +37,7 @@ def log_event_tree(
     event: 'BaseEvent[Any]',
     indent: str = '',
     is_last: bool = True,
-    child_events_by_parent: dict[str | None, list['BaseEvent[Any]']] | None = None,
+    event_children_by_parent: dict[str | None, list['BaseEvent[Any]']] | None = None,
 ) -> str:
     from bubus.models import logger
 
@@ -74,8 +74,8 @@ def log_event_tree(
 
         # Calculate which is the last item considering both results and unmapped children
         unmapped_children: list['BaseEvent[Any]'] = []
-        if child_events_by_parent:
-            all_children = child_events_by_parent.get(event.event_id, [])
+        if event_children_by_parent:
+            all_children = event_children_by_parent.get(event.event_id, [])
             for child in all_children:
                 # Will be printed later if not already printed by a handler
                 if child.event_id not in [c.event_id for r in event.event_results.values() for c in r.event_children]:
@@ -85,18 +85,18 @@ def log_event_tree(
 
         for i, (_handler_id, result) in enumerate(results_sorted):
             is_last_item = i == total_items - 1
-            lines.append(log_eventresult_tree(result, new_indent, is_last_item, child_events_by_parent))
+            lines.append(log_eventresult_tree(result, new_indent, is_last_item, event_children_by_parent))
             # Track child events printed by this result
             for child in result.event_children:
                 printed_child_ids.add(child.event_id)
 
     # Print unmapped children (those not printed by any handler)
-    if child_events_by_parent:
-        children = child_events_by_parent.get(event.event_id, [])
+    if event_children_by_parent:
+        children = event_children_by_parent.get(event.event_id, [])
         for i, child in enumerate(children):
             if child.event_id not in printed_child_ids:
                 is_last_child = i == len(children) - 1
-                lines.append(log_event_tree(child, new_indent, is_last_child, child_events_by_parent))
+                lines.append(log_event_tree(child, new_indent, is_last_child, event_children_by_parent))
 
     return '\n'.join(lines)
 
@@ -105,7 +105,7 @@ def log_eventresult_tree(
     result: 'EventResult[Any]',
     indent: str = '',
     is_last: bool = True,
-    child_events_by_parent: dict[str | None, list['BaseEvent[Any]']] | None = None,
+    event_children_by_parent: dict[str | None, list['BaseEvent[Any]']] | None = None,
 ) -> str:
     """Print this result and its child events with proper tree formatting"""
 
@@ -158,7 +158,7 @@ def log_eventresult_tree(
     if result.event_children:
         for i, child in enumerate(result.event_children):
             is_last_child = i == len(result.event_children) - 1
-            lines.append(log_event_tree(child, new_indent, is_last_child, child_events_by_parent))
+            lines.append(log_event_tree(child, new_indent, is_last_child, event_children_by_parent))
 
     return '\n'.join(lines)
 

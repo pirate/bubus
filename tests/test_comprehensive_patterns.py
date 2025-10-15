@@ -120,8 +120,8 @@ async def test_comprehensive_patterns():
         )
 
     # Child events should have parent's ID
-    child_events = [e for e in all_events if isinstance(e, (ImmediateChildEvent, QueuedChildEvent))]
-    assert all(event.event_parent_id == parent_event.event_id for event in child_events)
+    event_children = [e for e in all_events if isinstance(e, (ImmediateChildEvent, QueuedChildEvent))]
+    assert all(event.event_parent_id == parent_event.event_id for event in event_children)
 
     # Sort results by sequence number to see actual execution order
     sorted_results = sorted(results, key=lambda x: x[0])
