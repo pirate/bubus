@@ -464,7 +464,10 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         eventbus: 'EventBus | None' = None,
         timeout: float | None = None,
     ) -> 'dict[PythonIdStr, EventResult[T_EventResultType]]':
-        """Ensure EventResult placeholders exist for provided handlers before execution."""
+        """Ensure EventResult placeholders exist for provided handlers before execution.
+
+        Any stale timing/error data from prior runs is cleared so consumers immediately see a fresh pending state.
+        """
         pending_results: dict[PythonIdStr, 'EventResult[T_EventResultType]'] = {}
         for handler_id, handler in handlers.items():
             event_result = self.event_result_update(
@@ -998,11 +1001,28 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
         *,
         eventbus: 'EventBus',
         timeout: float | None,
-        enter_context: Callable[[BaseEvent[Any], str], tuple[Any, Any, Any]],
-        exit_context: Callable[[tuple[Any, Any, Any]], None],
-        log_filtered_traceback: Callable[[BaseException], str],
+        enter_context: Callable[[BaseEvent[Any], str], tuple[Any, Any, Any]] | None = None,
+        exit_context: Callable[[tuple[Any, Any, Any]], None] | None = None,
+        log_filtered_traceback: Callable[[BaseException], str] | None = None,
     ) -> T_EventResultType | BaseEvent[Any] | None:
         """Execute the handler and update internal state automatically."""
+
+        def _default_enter(_: BaseEvent[Any], __: str) -> tuple[None, None, None]:
+            return (None, None, None)
+
+        def _default_exit(_: tuple[Any, Any, Any]) -> None:
+            return None
+
+        def _default_log(exc: BaseException) -> str:
+            from traceback import TracebackException
+
+            return ''.join(
+                TracebackException.from_exception(exc, capture_locals=False).format()
+            )
+
+        _enter = enter_context or _default_enter
+        _exit = exit_context or _default_exit
+        _log_exc = log_filtered_traceback or _default_log
 
         self.timeout = timeout if timeout is not None else self.timeout or event.event_timeout
         self.result_type = event.event_result_type
@@ -1013,7 +1033,7 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
         monitor_task: asyncio.Task[None] | None = None
         handler_task: asyncio.Task[Any] | None = None
 
-        tokens = enter_context(event, self.handler_id)
+        tokens = _enter(event, self.handler_id)
 
         async def deadlock_monitor() -> None:
             await asyncio.sleep(15.0)
@@ -1080,7 +1100,7 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
             red = '\033[91m'
             reset = '\033[0m'
             logger.error(
-                f'❌ {eventbus} Error in event handler {self.handler_name}({event}) -> \n{red}{type(exc).__name__}({exc}){reset}\n{log_filtered_traceback(exc)}',
+                f'❌ {eventbus} Error in event handler {self.handler_name}({event}) -> \n{red}{type(exc).__name__}({exc}){reset}\n{_log_exc(exc)}',
             )
             raise
 
@@ -1102,7 +1122,7 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
                 except Exception:
                     pass
 
-            exit_context(tokens)
+            _exit(tokens)
 
     def log_tree(
         self, indent: str = '', is_last: bool = True, child_events_by_parent: dict[str | None, list[BaseEvent[Any]]] | None = None
