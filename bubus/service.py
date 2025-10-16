@@ -6,12 +6,11 @@ import traceback
 import warnings
 import weakref
 from collections import defaultdict, deque
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Literal, TypeVar, cast, overload
 
-import anyio  # pyright: ignore[reportMissingImports]
 from uuid_extensions import uuid7str  # pyright: ignore[reportMissingImports, reportUnknownVariableType]
 
 uuid7str: Callable[[], str] = uuid7str  # pyright: ignore
@@ -34,6 +33,7 @@ from bubus.models import (
     UUIDStr,
     get_handler_id,
     get_handler_name,
+    EventResult,
 )
 
 logger = logging.getLogger('bubus')
@@ -51,6 +51,31 @@ QueueEntryType = TypeVar('QueueEntryType', bound='BaseEvent[Any]')
 T_ExpectedEvent = TypeVar('T_ExpectedEvent', bound='BaseEvent[Any]')
 
 EventPatternType = PythonIdentifierStr | Literal['*'] | type['BaseEvent[Any]']
+
+class EventBusMiddleware:
+    """Base class for EventBus middlewares."""
+
+    async def before_handler(
+        self, eventbus: 'EventBus', event: 'BaseEvent[Any]', event_result: EventResult[Any]
+    ) -> None:
+        return None
+
+    async def after_handler(
+        self, eventbus: 'EventBus', event: 'BaseEvent[Any]', event_result: EventResult[Any]
+    ) -> None:
+        return None
+
+    async def on_handler_error(
+        self,
+        eventbus: 'EventBus',
+        event: 'BaseEvent[Any]',
+        event_result: EventResult[Any],
+        error: BaseException,
+    ) -> None:
+        return None
+
+    async def after_event(self, eventbus: 'EventBus', event: 'BaseEvent[Any]') -> None:
+        return None
 
 
 class CleanShutdownQueue(asyncio.Queue[QueueEntryType]):
@@ -263,7 +288,6 @@ class EventBus:
     # Class Attributes
     name: PythonIdentifierStr = 'EventBus'
     parallel_handlers: bool = False
-    wal_path: Path | None = None
 
     # Runtime State
     id: UUIDStr = '00000000-0000-0000-0000-000000000000'
@@ -278,9 +302,9 @@ class EventBus:
     def __init__(
         self,
         name: PythonIdentifierStr | None = None,
-        wal_path: Path | str | None = None,
         parallel_handlers: bool = False,
         max_history_size: int | None = 50,  # Keep only 50 events in history
+        middlewares: Sequence[EventBusMiddleware | type[EventBusMiddleware]] | None = None,
     ):
         self.id = uuid7str()
         self.name = name or f'{self.__class__.__name__}_{self.id[-8:]}'
@@ -332,19 +356,15 @@ class EventBus:
         self.event_history = {}
         self.handlers = defaultdict(list)
         self.parallel_handlers = parallel_handlers
-        self.wal_path = Path(wal_path) if wal_path else None
         self._on_idle = None
+        self._middlewares: list[EventBusMiddleware] = []
+        self.middlewares = list(middlewares or [])
 
         # Memory leak prevention settings
         self.max_history_size = max_history_size
 
         # Register this instance
         EventBus.all_instances.add(self)
-
-        # Instead of registering as normal event handlers,
-        # these special handlers are just called manually at the end of step
-        # self.on('*', self._default_log_handler)
-        # self.on('*', self._default_wal_handler)
 
     def __del__(self):
         """Auto-cleanup on garbage collection"""
@@ -370,6 +390,71 @@ class EventBus:
 
     def __repr__(self) -> str:
         return str(self)
+
+    @property
+    def middlewares(self) -> list[EventBusMiddleware]:
+        return getattr(self, '_middlewares', [])
+
+    @middlewares.setter
+    def middlewares(self, value: Sequence[EventBusMiddleware | type[EventBusMiddleware]]) -> None:
+        instances: list[EventBusMiddleware] = []
+        for middleware in value:
+            if isinstance(middleware, EventBusMiddleware):
+                instances.append(middleware)
+            elif inspect.isclass(middleware) and issubclass(middleware, EventBusMiddleware):
+                instances.append(middleware())
+            else:
+                raise TypeError(
+                    f'Invalid middleware {middleware!r}. Expected EventBusMiddleware instance or subclass.'
+                )
+        self._middlewares = instances
+
+    async def _call_middleware_hook(
+        self,
+        middleware: EventBusMiddleware,
+        method_name: str,
+        *args: Any,
+    ) -> None:
+        method = getattr(middleware, method_name, None)
+        if method is None:
+            return
+        result = method(*args)
+        if inspect.isawaitable(result):
+            await result
+
+    async def _middlewares_before_handler(self, event: 'BaseEvent[Any]', event_result: EventResult[Any]) -> None:
+        for middleware in self._middlewares:
+            await self._call_middleware_hook(middleware, 'before_handler', self, event, event_result)
+
+    async def _middlewares_after_handler(self, event: 'BaseEvent[Any]', event_result: EventResult[Any]) -> None:
+        for middleware in self._middlewares:
+            await self._call_middleware_hook(middleware, 'after_handler', self, event, event_result)
+
+    async def _middlewares_on_error(
+        self, event: 'BaseEvent[Any]', event_result: EventResult[Any], error: BaseException
+    ) -> None:
+        for middleware in self._middlewares:
+            await self._call_middleware_hook(middleware, 'on_handler_error', self, event, event_result, error)
+
+    async def _middleware_after_event(self, event: 'BaseEvent[Any]') -> None:
+        for middleware in self._middlewares:
+            await self._call_middleware_hook(middleware, 'after_event', self, event)
+
+    async def _dispatch_after_event_hooks(self, event: 'BaseEvent[Any]') -> None:
+        if getattr(event, '_after_event_hooks_run', False):
+            return
+
+        event_completed = False
+        if event.event_completed_signal is not None and event.event_completed_signal.is_set():
+            event_completed = True
+        elif event.event_results and all(result.status in ('completed', 'error') for result in event.event_results.values()):
+            event_completed = True
+
+        if not event_completed:
+            return
+
+        setattr(event, '_after_event_hooks_run', True)
+        await self._middleware_after_event(event)
 
     @property
     def events_pending(self) -> list['BaseEvent[Any]']:
@@ -972,11 +1057,10 @@ class EventBus:
         # Execute handlers
         await self._execute_handlers(event, handlers=applicable_handlers, timeout=timeout)
 
-        await self._default_log_handler(event)
-        await self._default_wal_handler(event)
-
         # Mark event as complete if all handlers are done
         event.event_mark_complete_if_all_handlers_completed()
+
+        await self._dispatch_after_event_hooks(event)
 
         # After processing this event, check if any parent events can now be marked complete
         # We do this by walking up the parent chain
@@ -988,10 +1072,12 @@ class EventBus:
 
             # Find parent event in any bus's history
             parent_event = None
+            parent_bus: EventBus | None = None
             # Create a list copy to avoid "Set changed size during iteration" error
             for bus in list(EventBus.all_instances):
                 if bus and current.event_parent_id in bus.event_history:
                     parent_event = bus.event_history[current.event_parent_id]
+                    parent_bus = bus
                     break
 
             if not parent_event:
@@ -1000,6 +1086,9 @@ class EventBus:
             # Check if parent can be marked complete
             if parent_event.event_completed_signal and not parent_event.event_completed_signal.is_set():
                 parent_event.event_mark_complete_if_all_handlers_completed()
+
+            if parent_bus:
+                await parent_bus._dispatch_after_event_hooks(parent_event)
 
             # Move up the chain
             current = parent_event
@@ -1097,29 +1186,51 @@ class EventBus:
         # print('FINSIHED EXECUTING ALL HANDLERS')
 
     async def execute_handler(
-        self, event: 'BaseEvent[T_EventResultType]', handler: EventHandler, timeout: float | None = None
+        self,
+        event: 'BaseEvent[T_EventResultType]',
+        handler: EventHandler,
+        timeout: float | None = None,
     ) -> Any:
-        """Safely execute a single handler via its EventResult wrapper."""
-        handler_id = get_handler_id(handler, self)
+        """Safely execute a single handler with middleware support and EventResult orchestration."""
 
+        handler_id = get_handler_id(handler, self)
         logger.debug(f' ↳ {self}.execute_handler({event}, handler={get_handler_name(handler)}#{handler_id[-4:]})')
+
         if handler_id not in event.event_results:
             event.event_create_pending_results({handler_id: handler}, eventbus=self, timeout=timeout or event.event_timeout)
 
         event_result = event.event_results[handler_id]
-        result_value = await event_result.execute(
-            event,
-            handler,
-            eventbus=self,
-            timeout=timeout or event.event_timeout,
-            enter_context=self._enter_handler_context,
-            exit_context=self._exit_handler_context,
-            log_filtered_traceback=_log_filtered_traceback,
-        )
-        logger.debug(
-            f'    ↳ Handler {get_handler_name(handler)}#{handler_id[-4:]} returned: {type(result_value).__name__ if result_value is not None else "None"}'
-        )
-        return cast(T_EventResultType, result_value)
+
+        event_result.update(status='started', timeout=timeout or event.event_timeout)
+
+        await self._middlewares_before_handler(event, event_result)
+
+        try:
+            result_value = await event_result.execute(
+                event,
+                handler,
+                eventbus=self,
+                timeout=timeout or event.event_timeout,
+                enter_context=self._enter_handler_context,
+                exit_context=self._exit_handler_context,
+                log_filtered_traceback=_log_filtered_traceback,
+            )
+
+            result_type_name = type(result_value).__name__ if result_value is not None else 'None'
+            logger.debug(
+                f'    ↳ Handler {get_handler_name(handler)}#{handler_id[-4:]} returned: {result_type_name}'
+            )
+
+            await self._middlewares_after_handler(event, event_result)
+            return cast(T_EventResultType, result_value)
+
+        except asyncio.CancelledError as exc:
+            await self._middlewares_on_error(event, event_result, exc)
+            raise
+        except Exception as exc:
+            await self._middlewares_on_error(event, event_result, exc)
+            raise
+
 
     def _would_create_loop(self, event: 'BaseEvent[Any]', handler: EventHandler) -> bool:
         """Check if calling this handler would create a loop"""
@@ -1212,27 +1323,6 @@ class EventBus:
 
         # Recursively check the parent's ancestry
         return self._handler_dispatched_ancestor(parent_event, handler_id, visited, depth)
-
-    async def _default_log_handler(self, event: 'BaseEvent[Any]') -> None:
-        """Default handler that logs all events"""
-        # logger.debug(
-        # 	f'✅ {self} completed: {event} -> {list(event.event_results.values()) or '<no handlers matched>'}'
-        # )
-        pass
-
-    async def _default_wal_handler(self, event: 'BaseEvent[Any]') -> None:
-        """Persist completed event to WAL file as JSONL"""
-
-        if not self.wal_path:
-            return None
-
-        try:
-            event_json = event.model_dump_json()  # pyright: ignore[reportUnknownMemberType]
-            self.wal_path.parent.mkdir(parents=True, exist_ok=True)
-            async with await anyio.open_file(self.wal_path, 'a', encoding='utf-8') as f:  # pyright: ignore[reportUnknownMemberType]
-                await f.write(event_json + '\n')  # pyright: ignore[reportUnknownMemberType]
-        except Exception as e:
-            logger.error(f'❌ {self} Failed to save event {event.event_id} to WAL file: {type(e).__name__} {e}\n{event}')
 
     def cleanup_excess_events(self) -> int:
         """
