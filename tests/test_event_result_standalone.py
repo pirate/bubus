@@ -16,10 +16,10 @@ class _StubEvent:
         self.event_timeout = 0.5
         self.event_processed_at = None
         self.event_results: dict[str, EventResult] = {}
-        self._cancelled_with: BaseException | None = None
+        self._cancelled_due_to_error: BaseException | None = None
 
     def event_cancel_pending_child_processing(self, error: BaseException) -> None:
-        self._cancelled_with = error
+        self._cancelled_due_to_error = error
 
 
 @pytest.mark.asyncio
@@ -51,7 +51,7 @@ async def test_event_result_execute_without_base_event() -> None:
     assert result_value == 'ok'
     assert event_result.status == 'completed'
     assert event_result.result == 'ok'
-    assert stub_event._cancelled_with is None
+    assert stub_event._cancelled_due_to_error is None
 
 
 class StandaloneEvent(BaseEvent[str]):

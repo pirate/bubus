@@ -1007,22 +1007,22 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
     ) -> T_EventResultType | BaseEvent[Any] | None:
         """Execute the handler and update internal state automatically."""
 
-        def _default_enter(_: BaseEvent[Any], __: str) -> tuple[None, None, None]:
+        def _default_enter_handler_context(_: BaseEvent[Any], __: str) -> tuple[None, None, None]:
             return (None, None, None)
 
-        def _default_exit(_: tuple[Any, Any, Any]) -> None:
+        def _default_exit_handler_context(_: tuple[Any, Any, Any]) -> None:
             return None
 
-        def _default_log(exc: BaseException) -> str:
+        def _default_format_exception_for_log(exc: BaseException) -> str:
             from traceback import TracebackException
 
             return ''.join(
                 TracebackException.from_exception(exc, capture_locals=False).format()
             )
 
-        _enter_handler_context_callable = enter_handler_context or _default_enter
-        _exit_handler_context_callable = exit_handler_context or _default_exit
-        _format_exception_for_log_callable = format_exception_for_log or _default_log
+        _enter_handler_context_callable = enter_handler_context or _default_enter_handler_context
+        _exit_handler_context_callable = exit_handler_context or _default_exit_handler_context
+        _format_exception_for_log_callable = format_exception_for_log or _default_format_exception_for_log
 
         self.timeout = timeout if timeout is not None else self.timeout or event.event_timeout
         self.result_type = event.event_result_type
@@ -1050,10 +1050,10 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
         try:
             if inspect.iscoroutinefunction(handler):
                 handler_task = asyncio.create_task(handler(event))  # type: ignore
-                result_value: Any = await asyncio.wait_for(handler_task, timeout=self.timeout)
+                handler_return_value: Any = await asyncio.wait_for(handler_task, timeout=self.timeout)
             elif inspect.isfunction(handler) or inspect.ismethod(handler):
-                result_value = handler(event)
-                if isinstance(result_value, BaseEvent):
+                handler_return_value = handler(event)
+                if isinstance(handler_return_value, BaseEvent):
                     logger.debug(
                         f'Handler {self.handler_name} returned BaseEvent, not awaiting to avoid circular dependency'
                     )
@@ -1061,7 +1061,7 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
                 raise ValueError(f'Handler {get_handler_name(handler)} must be a sync or async function, got: {type(handler)}')
 
             monitor_task.cancel()
-            self.update(result=result_value)
+            self.update(result=handler_return_value)
             return cast(T_EventResultType | BaseEvent[Any] | None, self.result)
 
         except asyncio.CancelledError as exc:

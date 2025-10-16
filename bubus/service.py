@@ -15,6 +15,7 @@ from uuid_extensions import uuid7str  # pyright: ignore[reportMissingImports, re
 
 uuid7str: Callable[[], str] = uuid7str  # pyright: ignore
 
+from bubus.event_history import EventHistory, InMemoryEventHistory
 from bubus.models import (
     BUBUS_LOGGING_LEVEL,
     AsyncEventHandlerClassMethod,
@@ -293,7 +294,7 @@ class EventBus:
     id: UUIDStr = '00000000-0000-0000-0000-000000000000'
     handlers: dict[PythonIdStr, list[ContravariantEventHandler['BaseEvent[Any]']]]  # collected by .on(<event_type>, <handler>)
     event_queue: CleanShutdownQueue['BaseEvent[Any]'] | None
-    event_history: dict[UUIDStr, 'BaseEvent[Any]']  # collected by .dispatch(<event>)
+    event_history: 'EventHistory[BaseEvent[Any]]'
 
     _is_running: bool = False
     _runloop_task: asyncio.Task[None] | None = None
@@ -304,6 +305,7 @@ class EventBus:
         name: PythonIdentifierStr | None = None,
         parallel_handlers: bool = False,
         max_history_size: int | None = 50,  # Keep only 50 events in history
+        event_history: EventHistory['BaseEvent[Any]'] | None = None,
         middlewares: Sequence[EventBusMiddleware | type[EventBusMiddleware]] | None = None,
     ):
         self.id = uuid7str()
@@ -353,7 +355,7 @@ class EventBus:
             )
 
         self.event_queue = None
-        self.event_history = {}
+        self.event_history = event_history or InMemoryEventHistory()
         self.handlers = defaultdict(list)
         self.parallel_handlers = parallel_handlers
         self._on_idle = None
@@ -459,19 +461,19 @@ class EventBus:
     @property
     def events_pending(self) -> list['BaseEvent[Any]']:
         """Get events that haven't started processing yet (does not include events that have not even finished dispatching yet in self.event_queue)"""
-        return [
-            event for event in self.event_history.values() if event.event_started_at is None and event.event_completed_at is None
-        ]
+        return self.event_history.filter(lambda event: event.event_started_at is None and event.event_completed_at is None)
 
     @property
     def events_started(self) -> list['BaseEvent[Any]']:
         """Get events currently being processed"""
-        return [event for event in self.event_history.values() if event.event_started_at and not event.event_completed_at]
+        return [
+            event for event in self.event_history.filter(lambda e: e.event_started_at and not e.event_completed_at)
+        ]
 
     @property
     def events_completed(self) -> list['BaseEvent[Any]']:
         """Get events that have completed processing"""
-        return [event for event in self.event_history.values() if event.event_completed_at is not None]
+        return self.event_history.filter(lambda e: e.event_completed_at is not None)
 
     # Overloads for typed event patterns with specific handler signatures
     # Order matters - more specific types must come before general ones
@@ -631,7 +633,9 @@ class EventBus:
         # Only enforce if we have memory limits set
         if self.max_history_size is not None:
             queue_size = self.event_queue.qsize() if self.event_queue else 0
-            pending_in_history = sum(1 for e in self.event_history.values() if e.event_status in ('pending', 'started'))
+            pending_in_history = len(
+                self.event_history.filter(lambda event: event.event_status in ('pending', 'started'))
+            )
             total_pending = queue_size + pending_in_history
 
             if total_pending >= 100:
@@ -649,7 +653,7 @@ class EventBus:
             try:
                 self.event_queue.put_nowait(event)
                 # Only add to history after successfully queuing
-                self.event_history[event.event_id] = event
+                self.event_history.add(event)
                 logger.info(
                     f'🗣️ {self}.dispatch({event.event_type}) ➡️ {event.event_type}#{event.event_id[-4:]} (#{self.event_queue.qsize()} {event.event_status})'
                 )
@@ -667,7 +671,7 @@ class EventBus:
         # This avoids "orphaned" pending results for handlers that get filtered out later.
 
         # Clean up if over the limit
-        if self.max_history_size and len(self.event_history) > self.max_history_size:
+        if self.max_history_size and self.event_history.count() > self.max_history_size:
             self.cleanup_event_history()
 
         return event
