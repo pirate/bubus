@@ -1120,20 +1120,22 @@ class EventBus:
 
         return filtered_handlers
 
-    def _enter_handler_context(self, event: 'BaseEvent[Any]', handler_id: str) -> tuple[contextvars.Token[Any], contextvars.Token[bool], contextvars.Token[str | None]]:
-        token = _current_event_context.set(event)
-        handler_token = inside_handler_context.set(True)
-        handler_id_token = _current_handler_id_context.set(handler_id)
-        return token, handler_token, handler_id_token
+    def _enter_handler_execution_context(
+        self, event: 'BaseEvent[Any]', handler_id: str
+    ) -> tuple[contextvars.Token[Any], contextvars.Token[bool], contextvars.Token[str | None]]:
+        event_token = _current_event_context.set(event)
+        inside_handler_token = inside_handler_context.set(True)
+        current_handler_token = _current_handler_id_context.set(handler_id)
+        return event_token, inside_handler_token, current_handler_token
 
-    def _exit_handler_context(
+    def _exit_handler_execution_context(
         self,
-        tokens: tuple[contextvars.Token[Any], contextvars.Token[bool], contextvars.Token[str | None]],
+        handler_context_tokens: tuple[contextvars.Token[Any], contextvars.Token[bool], contextvars.Token[str | None]],
     ) -> None:
-        token, handler_token, handler_id_token = tokens
-        _current_event_context.reset(token)
-        inside_handler_context.reset(handler_token)
-        _current_handler_id_context.reset(handler_id_token)
+        event_token, inside_handler_token, current_handler_token = handler_context_tokens
+        _current_event_context.reset(event_token)
+        inside_handler_context.reset(inside_handler_token)
+        _current_handler_id_context.reset(current_handler_token)
 
     async def _execute_handlers(
         self,
@@ -1211,9 +1213,9 @@ class EventBus:
                 handler,
                 eventbus=self,
                 timeout=timeout or event.event_timeout,
-                enter_context=self._enter_handler_context,
-                exit_context=self._exit_handler_context,
-                log_filtered_traceback=_log_filtered_traceback,
+                enter_handler_context=self._enter_handler_execution_context,
+                exit_handler_context=self._exit_handler_execution_context,
+                format_exception_for_log=_log_filtered_traceback,
             )
 
             result_type_name = type(result_value).__name__ if result_value is not None else 'None'

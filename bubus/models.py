@@ -1001,9 +1001,9 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
         *,
         eventbus: 'EventBus',
         timeout: float | None,
-        enter_context: Callable[[BaseEvent[Any], str], tuple[Any, Any, Any]] | None = None,
-        exit_context: Callable[[tuple[Any, Any, Any]], None] | None = None,
-        log_filtered_traceback: Callable[[BaseException], str] | None = None,
+        enter_handler_context: Callable[[BaseEvent[Any], str], tuple[Any, Any, Any]] | None = None,
+        exit_handler_context: Callable[[tuple[Any, Any, Any]], None] | None = None,
+        format_exception_for_log: Callable[[BaseException], str] | None = None,
     ) -> T_EventResultType | BaseEvent[Any] | None:
         """Execute the handler and update internal state automatically."""
 
@@ -1020,9 +1020,9 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
                 TracebackException.from_exception(exc, capture_locals=False).format()
             )
 
-        _enter = enter_context or _default_enter
-        _exit = exit_context or _default_exit
-        _log_exc = log_filtered_traceback or _default_log
+        _enter_handler_context_callable = enter_handler_context or _default_enter
+        _exit_handler_context_callable = exit_handler_context or _default_exit
+        _format_exception_for_log_callable = format_exception_for_log or _default_log
 
         self.timeout = timeout if timeout is not None else self.timeout or event.event_timeout
         self.result_type = event.event_result_type
@@ -1033,7 +1033,7 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
         monitor_task: asyncio.Task[None] | None = None
         handler_task: asyncio.Task[Any] | None = None
 
-        tokens = _enter(event, self.handler_id)
+        handler_context_tokens = _enter_handler_context_callable(event, self.handler_id)
 
         async def deadlock_monitor() -> None:
             await asyncio.sleep(15.0)
@@ -1100,7 +1100,7 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
             red = '\033[91m'
             reset = '\033[0m'
             logger.error(
-                f'❌ {eventbus} Error in event handler {self.handler_name}({event}) -> \n{red}{type(exc).__name__}({exc}){reset}\n{_log_exc(exc)}',
+                f'❌ {eventbus} Error in event handler {self.handler_name}({event}) -> \n{red}{type(exc).__name__}({exc}){reset}\n{_format_exception_for_log_callable(exc)}',
             )
             raise
 
@@ -1122,7 +1122,7 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
                 except Exception:
                     pass
 
-            _exit(tokens)
+            _exit_handler_context_callable(handler_context_tokens)
 
     def log_tree(
         self,
