@@ -477,11 +477,29 @@ await bus.dispatch(DataEvent())
 Persist events automatically to a `jsonl` file for future replay and debugging:
 
 ```python
+from pathlib import Path
+
+from bubus import EventBus
+from bubus.middlewares import (
+    LoggerEventBusMiddleware,
+    SQLiteEventBusMiddleware,
+    WALEventBusMiddleware,
+)
+
 # Enable WAL event log persistence (optional)
-bus = EventBus(name='MyBus', wal_path='./events.jsonl')
+bus = EventBus(
+    name='MyBus',
+    middlewares=[
+        WALEventBusMiddleware('./events.jsonl'),
+        LoggerEventBusMiddleware('./events.log'),
+        SQLiteEventBusMiddleware('./events.sqlite'),
+    ],
+)
+
+# LoggerEventBusMiddleware defaults to stdout-only logging if no file path is provided
 
 # All completed events are automatically appended as JSON lines to the end
-bus.dispatch(SecondEventAbc(some_key="banana"))
+await bus.dispatch(SecondEventAbc(some_key="banana"))
 ```
 
 `./events.jsonl`:
@@ -507,17 +525,43 @@ The main event bus class that manages event processing and handler execution.
 ```python
 EventBus(
     name: str | None = None,
-    wal_path: Path | str | None = None,
     parallel_handlers: bool = False,
-    max_history_size: int | None = 50
+    max_history_size: int | None = 50,
+    middlewares: Sequence[EventBusMiddleware | type[EventBusMiddleware]] | None = None,
 )
 ```
 
 **Parameters:**
 
 - `name`: Optional unique name for the bus (auto-generated if not provided)
-- `wal_path`: Path for write-ahead logging of events to a `jsonl` file (optional)
 - `parallel_handlers`: If `True`, handlers run concurrently for each event, otherwise serially if `False` (the default)
+- `middlewares`: Optional list of `EventBusMiddleware` subclasses or instances that hook into handler execution for analytics, logging, retries, etc.
+
+Handler middlewares subclass `EventBusMiddleware` and override whichever lifecycle hooks they need:
+
+```python
+from bubus.middlewares import EventBusMiddleware
+
+class AnalyticsMiddleware(EventBusMiddleware):
+    async def before_handler(self, eventbus, event, event_result):
+        await analytics_bus.dispatch(HandlerStartedAnalyticsEvent(event_id=event_result.event_id))
+
+    async def after_handler(self, eventbus, event, event_result):
+        await analytics_bus.dispatch(HandlerCompletedAnalyticsEvent(event_id=event_result.event_id))
+
+    async def on_handler_error(self, eventbus, event, event_result, error):
+        await analytics_bus.dispatch(HandlerCompletedAnalyticsEvent(event_id=event_result.event_id, error=error))
+```
+
+Middlewares can observe or mutate the `EventResult` at each step, dispatch additional events, or trigger other side effects (metrics, retries, auth checks, etc.).
+
+The built-in `SQLiteEventBusMiddleware` mirrors every event and handler transition into append-only `events_log` and `event_results_log` tables, making it easy to inspect or audit the bus state:
+
+```python
+from bubus.middlewares import SQLiteEventBusMiddleware
+
+bus = EventBus(middlewares=[SQLiteEventBusMiddleware('./events.sqlite')])
+```
 - `max_history_size`: Maximum number of events to keep in history (default: 50, None = unlimited)
 
 #### `EventBus` Properties

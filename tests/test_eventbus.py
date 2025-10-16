@@ -17,6 +17,7 @@ Tests cover:
 import asyncio
 import json
 import os
+import sqlite3
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -25,6 +26,12 @@ import pytest
 from pydantic import Field
 
 from bubus import BaseEvent, EventBus
+from bubus.middlewares import (
+    EventBusMiddleware,
+    LoggerEventBusMiddleware,
+    SQLiteEventBusMiddleware,
+    WALEventBusMiddleware,
+)
 
 
 class CreateAgentTaskEvent(BaseEvent):
@@ -694,7 +701,7 @@ class TestWALPersistence:
         """Test that events are automatically persisted to WAL file"""
         # Create event bus with WAL path
         wal_path = tmp_path / 'test_events.jsonl'
-        bus = EventBus(name='TestBus', wal_path=wal_path)
+        bus = EventBus(name='TestBus', middlewares=[WALEventBusMiddleware(wal_path)])
 
         try:
             # Emit some events
@@ -734,7 +741,7 @@ class TestWALPersistence:
         assert not wal_path.parent.exists()
 
         # Create event bus
-        bus = EventBus(name='TestBus', wal_path=wal_path)
+        bus = EventBus(name='TestBus', middlewares=[WALEventBusMiddleware(wal_path)])
 
         try:
             # Emit an event
@@ -755,7 +762,7 @@ class TestWALPersistence:
     async def test_wal_persistence_skips_incomplete_events(self, tmp_path):
         """Test that WAL persistence only writes completed events"""
         wal_path = tmp_path / 'incomplete_events.jsonl'
-        bus = EventBus(name='TestBus', wal_path=wal_path)
+        bus = EventBus(name='TestBus', middlewares=[WALEventBusMiddleware(wal_path)])
 
         try:
             # Add a slow handler that will delay completion
@@ -788,6 +795,172 @@ class TestWALPersistence:
         finally:
             await bus.stop()
 
+
+class TestHandlerMiddleware:
+    """Tests for the handler middleware pipeline."""
+
+    async def test_middleware_wraps_successful_handler(self):
+        calls: list[tuple[str, str]] = []
+
+        class TrackingMiddleware(EventBusMiddleware):
+            def __init__(self, call_log: list[tuple[str, str]]):
+                self.call_log = call_log
+
+            async def before_handler(self, eventbus: EventBus, event: BaseEvent, event_result):
+                self.call_log.append(('before', event_result.status))
+
+            async def after_handler(self, eventbus: EventBus, event: BaseEvent, event_result):
+                self.call_log.append(('after', event_result.status))
+
+        bus = EventBus(middlewares=[TrackingMiddleware(calls)])
+        bus.on('UserActionEvent', lambda event: 'ok')
+
+        try:
+            completed = await bus.dispatch(UserActionEvent(action='test', user_id='user1'))
+            await bus.wait_until_idle()
+
+            assert completed.event_results
+            result = next(iter(completed.event_results.values()))
+            assert result.status == 'completed'
+            assert result.result == 'ok'
+            assert calls == [('before', 'started'), ('after', 'completed')]
+        finally:
+            await bus.stop()
+
+    async def test_middleware_observes_handler_errors(self):
+        observations: list[tuple[str, str]] = []
+
+        class ErrorMiddleware(EventBusMiddleware):
+            def __init__(self, log: list[tuple[str, str]]):
+                self.log = log
+
+            async def before_handler(self, eventbus: EventBus, event: BaseEvent, event_result):
+                self.log.append(('before', event_result.status))
+
+            async def on_handler_error(
+                self,
+                eventbus: EventBus,
+                event: BaseEvent,
+                event_result,
+                error: BaseException,
+            ):
+                self.log.append(('error', type(error).__name__))
+
+        async def failing_handler(event: BaseEvent) -> None:
+            raise ValueError('boom')
+
+        bus = EventBus(middlewares=[ErrorMiddleware(observations)])
+        bus.on('UserActionEvent', failing_handler)
+
+        try:
+            event = await bus.dispatch(UserActionEvent(action='fail', user_id='user2'))
+            await bus.wait_until_idle()
+
+            result = next(iter(event.event_results.values()))
+            assert result.status == 'error'
+            assert isinstance(result.error, ValueError)
+            assert observations == [('before', 'started'), ('error', 'ValueError')]
+        finally:
+            await bus.stop()
+
+
+class TestSQLiteMiddleware:
+    async def test_sqlite_middleware_persists_events_and_results(self, tmp_path):
+        db_path = tmp_path / 'events.sqlite'
+        middleware = SQLiteEventBusMiddleware(db_path)
+        bus = EventBus(middlewares=[middleware])
+
+        async def handler(event: BaseEvent) -> str:
+            return 'ok'
+
+        bus.on('UserActionEvent', handler)
+
+        try:
+            await bus.dispatch(UserActionEvent(action='ping', user_id='u-1'))
+            await bus.wait_until_idle()
+
+            conn = sqlite3.connect(db_path)
+            events = conn.execute('SELECT event_id, event_type, event_status, event_json FROM events_log').fetchall()
+            assert len(events) == 1
+            assert events[0][1] == 'UserActionEvent'
+            assert events[0][2] == 'completed'
+
+            result_rows = conn.execute(
+                'SELECT status, result_repr, error_repr FROM event_results_log ORDER BY id'
+            ).fetchall()
+            conn.close()
+
+            assert [status for status, *_ in result_rows] == ['started', 'completed']
+            assert result_rows[-1][1] == "'ok'"
+            assert result_rows[-1][2] is None
+        finally:
+            await bus.stop()
+
+
+class TestLoggerMiddleware:
+    async def test_logger_middleware_writes_file(self, tmp_path):
+        log_path = tmp_path / 'events.log'
+        bus = EventBus(middlewares=[LoggerEventBusMiddleware(log_path)])
+
+        async def handler(event: BaseEvent) -> str:
+            return 'logged'
+
+        bus.on('UserActionEvent', handler)
+
+        try:
+            await bus.dispatch(UserActionEvent(action='log', user_id='user'))
+            await bus.wait_until_idle()
+
+            assert log_path.exists()
+            contents = log_path.read_text().strip().splitlines()
+            assert contents
+            assert 'UserActionEvent' in contents[-1]
+        finally:
+            await bus.stop()
+
+    async def test_logger_middleware_stdout_only(self, capsys):
+        bus = EventBus(middlewares=[LoggerEventBusMiddleware()])
+
+        async def handler(event: BaseEvent) -> str:
+            return 'stdout'
+
+        bus.on('UserActionEvent', handler)
+
+        try:
+            await bus.dispatch(UserActionEvent(action='log', user_id='user'))
+            await bus.wait_until_idle()
+
+            captured = capsys.readouterr()
+            assert 'UserActionEvent' in captured.out
+            assert 'stdout' not in captured.err
+        finally:
+            await bus.stop()
+    async def test_sqlite_middleware_records_errors(self, tmp_path):
+        db_path = tmp_path / 'events.sqlite'
+        middleware = SQLiteEventBusMiddleware(db_path)
+        bus = EventBus(middlewares=[middleware])
+
+        async def failing_handler(event: BaseEvent) -> None:
+            raise RuntimeError('handler boom')
+
+        bus.on('UserActionEvent', failing_handler)
+
+        try:
+            await bus.dispatch(UserActionEvent(action='boom', user_id='u-2'))
+            await bus.wait_until_idle()
+
+            conn = sqlite3.connect(db_path)
+            result_rows = conn.execute(
+                'SELECT status, error_repr FROM event_results_log ORDER BY id'
+            ).fetchall()
+            events = conn.execute('SELECT event_status FROM events_log').fetchall()
+            conn.close()
+
+            assert [status for status, _ in result_rows] == ['started', 'error']
+            assert 'RuntimeError' in result_rows[-1][1]
+            assert events[0][0] == 'error'
+        finally:
+            await bus.stop()
 
 class TestEventBusHierarchy:
     """Test hierarchical EventBus subscription patterns"""
