@@ -1030,22 +1030,18 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
         if hasattr(event, 'event_processed_at'):
             event.event_processed_at = event.event_processed_at or datetime.now(UTC)
 
-        monitor_task: asyncio.Task[None] | None = None
         handler_task: asyncio.Task[Any] | None = None
+        loop = asyncio.get_running_loop()
 
-        handler_context_tokens = _enter_handler_context_callable(event, self.handler_id)
-
-        async def deadlock_monitor() -> None:
-            await asyncio.sleep(15.0)
+        def warn_slow_handler() -> None:
             logger.warning(
                 f'⚠️ {eventbus} handler {self.handler_name}() has been running for >15s on event. Possible slow processing or deadlock.\n'
                 '(handler could be trying to await its own result or could be blocked by another async task).\n'
                 f'{self.handler_name}({event})'
             )
 
-        monitor_task = asyncio.create_task(
-            deadlock_monitor(), name=f'{eventbus}.deadlock_monitor({event}, {self.handler_name}#{self.handler_id[-4:]})'
-        )
+        handler_context_tokens = _enter_handler_context_callable(event, self.handler_id)
+        monitor_handle = loop.call_later(15.0, warn_slow_handler)
 
         try:
             if inspect.iscoroutinefunction(handler):
@@ -1060,13 +1056,12 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
             else:
                 raise ValueError(f'Handler {get_handler_name(handler)} must be a sync or async function, got: {type(handler)}')
 
-            monitor_task.cancel()
+            monitor_handle.cancel()
             self.update(result=result_value)
             return cast(T_EventResultType | BaseEvent[Any] | None, self.result)
 
         except asyncio.CancelledError as exc:
-            if monitor_task:
-                monitor_task.cancel()
+            monitor_handle.cancel()
             handler_interrupted_error = asyncio.CancelledError(
                 f'Event handler {self.handler_name}#{self.handler_id[-4:]}({event}) was interrupted because of a parent timeout'
             )
@@ -1074,8 +1069,7 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
             raise handler_interrupted_error from exc
 
         except TimeoutError as exc:
-            if monitor_task:
-                monitor_task.cancel()
+            monitor_handle.cancel()
             children = (
                 f' and interrupted any processing of {len(event.event_children)} child events'
                 if event.event_children
@@ -1093,8 +1087,7 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
             raise timeout_error from exc
 
         except Exception as exc:
-            if monitor_task:
-                monitor_task.cancel()
+            monitor_handle.cancel()
             self.update(error=exc)
 
             red = '\033[91m'
@@ -1110,16 +1103,6 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
                 try:
                     await asyncio.wait_for(handler_task, timeout=0.1)
                 except (asyncio.CancelledError, TimeoutError):
-                    pass
-
-            if monitor_task:
-                try:
-                    if not monitor_task.done():
-                        monitor_task.cancel()
-                    await monitor_task
-                except asyncio.CancelledError:
-                    pass
-                except Exception:
                     pass
 
             _exit_handler_context_callable(handler_context_tokens)

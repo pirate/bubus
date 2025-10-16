@@ -28,10 +28,13 @@ from pydantic import Field
 from bubus import BaseEvent, EventBus
 from bubus.middlewares import (
     EventBusMiddleware,
+    HueySqliteEventBusMiddleware,
     LoggerEventBusMiddleware,
     SQLiteEventBusMiddleware,
     WALEventBusMiddleware,
 )
+from huey import SqliteHuey
+from huey.constants import EmptyData
 
 
 class CreateAgentTaskEvent(BaseEvent):
@@ -918,6 +921,56 @@ class TestLoggerMiddleware:
         finally:
             await bus.stop()
 
+    async def test_logger_middleware_stdout_only(self, capsys):
+        bus = EventBus(middlewares=[LoggerEventBusMiddleware()])
+
+        async def handler(event: BaseEvent) -> str:
+            return 'stdout'
+
+        bus.on('UserActionEvent', handler)
+
+        try:
+            await bus.dispatch(UserActionEvent(action='log', user_id='user'))
+            await bus.wait_until_idle()
+
+            captured = capsys.readouterr()
+            assert 'UserActionEvent' in captured.out
+        finally:
+            await bus.stop()
+
+
+class TestHueySqliteMiddleware:
+    async def test_huey_sqlite_middleware_stores_event_and_results(self, tmp_path):
+        db_path = tmp_path / 'huey.db'
+        middleware = HueySqliteEventBusMiddleware(db_path, queue_name='test-queue')
+        bus = EventBus(middlewares=[middleware])
+
+        async def handler(event: BaseEvent) -> str:
+            return 'ok'
+
+        bus.on('UserActionEvent', handler)
+
+        try:
+            event = await bus.dispatch(UserActionEvent(action='event', user_id='user'))
+            await bus.wait_until_idle()
+
+            huey = SqliteHuey(name='test-queue', filename=str(db_path))
+            serializer = huey.serializer
+
+            event_bytes = huey.storage.peek_data(event.event_id)
+            assert event_bytes not in (None, EmptyData)
+            event_payload = serializer.deserialize(event_bytes)
+            assert event_payload['event_type'] == 'UserActionEvent'
+            assert event_payload['action'] == 'event'
+
+            handler_id = next(iter(event.event_results.keys()))
+            result_bytes = huey.storage.peek_data(f'result:{handler_id}')
+            assert result_bytes not in (None, EmptyData)
+            result_payload = serializer.deserialize(result_bytes)
+            assert result_payload['status'] == 'completed'
+            assert result_payload['result_repr'] == "'ok'"
+        finally:
+            await bus.stop()
     async def test_logger_middleware_stdout_only(self, capsys):
         bus = EventBus(middlewares=[LoggerEventBusMiddleware()])
 

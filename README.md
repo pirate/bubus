@@ -481,6 +481,7 @@ from pathlib import Path
 
 from bubus import EventBus
 from bubus.middlewares import (
+    HueySqliteEventBusMiddleware,
     LoggerEventBusMiddleware,
     SQLiteEventBusMiddleware,
     WALEventBusMiddleware,
@@ -493,6 +494,7 @@ bus = EventBus(
         WALEventBusMiddleware('./events.jsonl'),
         LoggerEventBusMiddleware('./events.log'),
         SQLiteEventBusMiddleware('./events.sqlite'),
+        HueySqliteEventBusMiddleware('./huey.sqlite'),
     ],
 )
 
@@ -554,6 +556,8 @@ class AnalyticsMiddleware(EventBusMiddleware):
 ```
 
 Middlewares can observe or mutate the `EventResult` at each step, dispatch additional events, or trigger other side effects (metrics, retries, auth checks, etc.).
+
+`HueySqliteEventBusMiddleware` keeps the event stream in sync with `SqliteHuey`, allowing Django-Huey consumers to read the same database transparently.
 
 The built-in `SQLiteEventBusMiddleware` mirrors every event and handler transition into append-only `events_log` and `event_results_log` tables, making it easy to inspect or audit the bus state:
 

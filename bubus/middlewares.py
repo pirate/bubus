@@ -13,7 +13,15 @@ from bubus.logging import log_eventbus_tree
 from bubus.models import BaseEvent
 from bubus.service import EventBus, EventBusMiddleware as _EventBusMiddleware
 
-__all__ = ['EventBusMiddleware', 'WALEventBusMiddleware', 'LoggerEventBusMiddleware', 'SQLiteEventBusMiddleware']
+from huey import SqliteHuey
+
+__all__ = [
+    'EventBusMiddleware',
+    'WALEventBusMiddleware',
+    'LoggerEventBusMiddleware',
+    'SQLiteEventBusMiddleware',
+    'HueySqliteEventBusMiddleware',
+]
 
 logger = logging.getLogger('bubus.middleware')
 
@@ -255,3 +263,66 @@ class SQLiteEventBusMiddleware(EventBusMiddleware):
         if any(result.status not in ('completed', 'error') for result in event.event_results.values()):
             return False
         return event.event_are_all_children_complete()
+
+
+class HueySqliteEventBusMiddleware(EventBusMiddleware):
+    """Persist events and handler results in a Huey-compatible Sqlite database."""
+
+    def __init__(self, db_path: str | Path, *, queue_name: str = 'bubus'):
+        self.db_path = Path(db_path)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.huey = SqliteHuey(name=queue_name, filename=str(self.db_path))
+        self._lock = asyncio.Lock()
+
+    async def before_handler(self, eventbus: EventBus, event: BaseEvent[Any], event_result) -> None:
+        await self._store_result(event_result)
+
+    async def after_handler(self, eventbus: EventBus, event: BaseEvent[Any], event_result) -> None:
+        await self._store_result(event_result)
+
+    async def on_handler_error(
+        self,
+        eventbus: EventBus,
+        event: BaseEvent[Any],
+        event_result,
+        error: BaseException,
+    ) -> None:
+        await self._store_result(event_result, error_override=error)
+
+    async def after_event(self, eventbus: EventBus, event: BaseEvent[Any]) -> None:
+        payload = self._serialize_event(event, eventbus)
+        await self._store_data(event.event_id, payload)
+
+    async def _store_result(self, event_result, error_override: BaseException | None = None) -> None:
+        payload = self._serialize_result(event_result, error_override=error_override)
+        key = f'result:{event_result.handler_id}'
+        await self._store_data(key, payload)
+
+    async def _store_data(self, key: str, payload: dict[str, Any]) -> None:
+        async with self._lock:
+            await asyncio.to_thread(self.huey.put_result, key, payload)
+
+    def _serialize_event(self, event: BaseEvent[Any], eventbus: EventBus) -> dict[str, Any]:
+        data = event.model_dump(mode='json')
+        data['eventbus_name'] = eventbus.name
+        data['event_children'] = [child.event_id for child in getattr(event, 'event_children', [])]
+        data['event_results'] = [
+            result_id for result_id in getattr(event, 'event_results', {}).keys()
+        ]
+        return data
+
+    def _serialize_result(
+        self,
+        event_result,
+        *,
+        error_override: BaseException | None = None,
+    ) -> dict[str, Any]:
+        data = event_result.model_dump(mode='json', exclude={'error', 'result'})
+        error = error_override or event_result.error
+        data['error'] = repr(error) if error is not None else None
+        result_value = event_result.result
+        try:
+            data['result_repr'] = repr(result_value)
+        except Exception:
+            data['result_repr'] = '<unrepresentable>'
+        return data

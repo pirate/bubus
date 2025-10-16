@@ -32,7 +32,7 @@ async def test_20k_events_with_memory_control():
     print(f'\nInitial memory: {initial_memory:.1f} MB')
 
     # Create EventBus with proper limits (now default)
-    bus = EventBus(name='ManyEvents')
+    bus = EventBus(name='ManyEvents', middlewares=[])
 
     print('EventBus settings:')
     print(f'  max_history_size: {bus.max_history_size}')
@@ -158,7 +158,7 @@ async def test_20k_events_with_memory_control():
 @pytest.mark.asyncio
 async def test_hard_limit_enforcement():
     """Test that hard limit of 100 pending events is enforced"""
-    bus = EventBus(name='HardLimitTest')
+    bus = EventBus(name='HardLimitTest', middlewares=[])
 
     try:
         # Create a slow handler to keep events pending
@@ -196,7 +196,7 @@ async def test_hard_limit_enforcement():
 @pytest.mark.asyncio
 async def test_cleanup_prioritizes_pending():
     """Test that cleanup keeps pending events and removes completed ones"""
-    bus = EventBus(name='CleanupTest', max_history_size=10)
+    bus = EventBus(name='CleanupTest', max_history_size=10, middlewares=[])
 
     try:
         # Process some events to completion
