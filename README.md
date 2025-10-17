@@ -480,19 +480,16 @@ Persist events automatically to a `jsonl` file for future replay and debugging:
 from pathlib import Path
 
 from bubus import EventBus
-from bubus.middlewares import (
-    LoggerEventBusMiddleware,
-    SQLiteEventBusMiddleware,
-    WALEventBusMiddleware,
-)
+from bubus.event_history import SQLiteEventHistory
+from bubus.middlewares import LoggerEventBusMiddleware, WALEventBusMiddleware
 
 # Enable WAL event log persistence (optional)
 bus = EventBus(
     name='MyBus',
+    event_history=SQLiteEventHistory('./events.sqlite'),
     middlewares=[
         WALEventBusMiddleware('./events.jsonl'),
         LoggerEventBusMiddleware('./events.log'),
-        SQLiteEventBusMiddleware('./events.sqlite'),
     ],
 )
 
@@ -555,12 +552,12 @@ class AnalyticsMiddleware(EventBusMiddleware):
 
 Middlewares can observe or mutate the `EventResult` at each step, dispatch additional events, or trigger other side effects (metrics, retries, auth checks, etc.).
 
-The built-in `SQLiteEventBusMiddleware` mirrors every event and handler transition into append-only `events_log` and `event_results_log` tables, making it easy to inspect or audit the bus state:
+Pair that with the built-in `SQLiteEventHistory` to mirror every event and handler transition into append-only `events_log` and `event_results_log` tables, making it easy to inspect or audit the bus state:
 
 ```python
-from bubus.middlewares import SQLiteEventBusMiddleware
+from bubus.event_history import SQLiteEventHistory
 
-bus = EventBus(middlewares=[SQLiteEventBusMiddleware('./events.sqlite')])
+bus = EventBus(event_history=SQLiteEventHistory('./events.sqlite'))
 ```
 - `max_history_size`: Maximum number of events to keep in history (default: 50, None = unlimited)
 

@@ -1,14 +1,18 @@
 """Event bus for the browser-use agent."""
 
-from bubus.middlewares import EventBusMiddleware, LoggerEventBusMiddleware, SQLiteEventBusMiddleware
-from bubus.models import BaseEvent, EventHandler, EventResult, PythonIdentifierStr, PythonIdStr, UUIDStr
-from bubus.service import EventBus
+from .event_history import EventHistory, InMemoryEventHistory, SQLiteEventHistory
+from .middlewares import EventBusMiddleware, LoggerEventBusMiddleware, WALEventBusMiddleware
+from .models import BaseEvent, EventHandler, EventResult, PythonIdentifierStr, PythonIdStr, UUIDStr
+from .service import EventBus
 
 __all__ = [
     'EventBus',
     'EventBusMiddleware',
     'LoggerEventBusMiddleware',
-    'SQLiteEventBusMiddleware',
+    'WALEventBusMiddleware',
+    'EventHistory',
+    'InMemoryEventHistory',
+    'SQLiteEventHistory',
     'BaseEvent',
     'EventResult',
     'EventHandler',
