@@ -1062,7 +1062,7 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
 
             monitor_task.cancel()
             self.update(result=handler_return_value)
-            return cast(T_EventResultType | BaseEvent[Any] | None, self.result)
+            return self.result
 
         except asyncio.CancelledError as exc:
             if monitor_task:

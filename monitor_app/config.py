@@ -1,7 +1,5 @@
 """Configuration helpers for the monitoring app."""
 
-from __future__ import annotations
-
 import os
 from pathlib import Path
 

@@ -63,43 +63,53 @@ async def index() -> str:
             .toolbar input,
             .toolbar select { background: rgba(15,23,42,0.72); border: 1px solid rgba(148,163,184,0.35); color: inherit; border-radius: 0.5rem; padding: 0.4rem 0.65rem; font-size: 0.86rem; min-width: 9.5rem; }
             .toolbar label { display: flex; align-items: center; gap: 0.35rem; }
-            #events-tree { display: grid; gap: 0.45rem; }
-            .tree-node { position: relative; background: rgba(15,23,42,0.34); border: 1px solid rgba(148,163,184,0.26); border-radius: 0.6rem; padding: 0.45rem 0.75rem 0.55rem 1.2rem; }
-            .tree-node::before { content: ''; position: absolute; left: 0.55rem; top: 0.6rem; bottom: 0.6rem; border-left: 2px solid rgba(94,234,212,0.25); }
-            .tree-node details { padding-top: 0; }
-            .tree-node details > summary { list-style: none; cursor: pointer; padding: 0; outline: none; }
-            .tree-node details > summary::-webkit-details-marker { display: none; }
-            .event-summary { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; font-size: 0.9rem; }
-            .pill { display: inline-flex; align-items: center; gap: 0.35rem; border-radius: 999px; padding: 0.2rem 0.6rem; border: 1px solid rgba(148,163,184,0.32); background: rgba(15,23,42,0.68); font-size: 0.85rem; }
-            .pill-type { font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; background: rgba(94,234,212,0.12); border-color: rgba(94,234,212,0.42); }
+            #events-tree { display: grid; gap: 0.6rem; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); align-items: start; }
+            
+            .tree-node { background: rgba(15,23,42,0.36); border: 1px solid rgba(148,163,184,0.22); border-radius: 0.6rem; padding: 0.55rem 0.75rem 0.65rem; box-shadow: 0 12px 24px rgba(8,11,25,0.35); }
+            .tree-node > details > summary { list-style: none; cursor: pointer; padding: 0; margin: 0; outline: none; }
+            .tree-node summary::-webkit-details-marker { display: none; }
+            .event-summary { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+            .pill { display: inline-flex; align-items: center; gap: 0.35rem; border-radius: 999px; padding: 0.22rem 0.6rem; border: 1px solid rgba(148,163,184,0.32); background: rgba(13,23,42,0.78); font-size: 0.85rem; font-weight: 500; color: rgba(226,232,240,0.92); }
+            .pill-type { text-transform: uppercase; letter-spacing: 0.055em; background: rgba(94,234,212,0.14); border-color: rgba(94,234,212,0.42); color: #5eead4; }
             .pill-muted { color: rgba(226,232,240,0.88); }
-            .pill-status { font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+            .pill-status { font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; }
             .pill-status.pill-completed { background: rgba(16,185,129,0.2); border-color: rgba(16,185,129,0.5); color: #34d399; }
             .pill-status.pill-started { background: rgba(250,204,21,0.2); border-color: rgba(250,204,21,0.45); color: #facc15; }
-            .pill-status.pill-pending { background: rgba(59,130,246,0.24); border-color: rgba(59,130,246,0.45); color: #60a5fa; }
-            .pill-status.pill-error { background: rgba(239,68,68,0.24); border-color: rgba(239,68,68,0.5); color: #f87171; }
+            .pill-status.pill-pending { background: rgba(59,130,246,0.24); border-color: rgba(59,130,246,0.42); color: #60a5fa; }
+            .pill-status.pill-error { background: rgba(239,68,68,0.22); border-color: rgba(239,68,68,0.48); color: #f87171; }
             .event-meta { margin-top: 0.5rem; padding: 0.45rem 0.55rem 0.3rem; background: rgba(15,23,42,0.46); border-radius: 0.55rem; border: 1px solid rgba(148,163,184,0.2); }
             .meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.35rem 0.55rem; }
-            .meta-item { display: grid; grid-template-columns: auto 1fr; align-items: center; column-gap: 0.35rem; font-size: 0.84rem; padding: 0.18rem 0.45rem; background: rgba(15,23,42,0.6); border-radius: 0.45rem; }
-            .meta-icon { opacity: 0.85; font-size: 0.88rem; }
-            .meta-label { color: rgba(203,213,225,0.78); font-weight: 500; }
-            .meta-value { color: rgba(226,232,240,0.95); font-weight: 600; overflow-wrap: anywhere; }
-            .meta-value code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size: 0.8rem; padding: 0.05rem 0.35rem; background: rgba(15,23,42,0.72); border-radius: 0.35rem; border: 1px solid rgba(148,163,184,0.26); }
-            .results-section { margin-top: 0.5rem; }
-            .results-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
-            .results-table th { text-align: left; padding: 0.3rem 0.45rem; color: rgba(148,163,184,0.9); text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.74rem; }
-            .results-table td { padding: 0.32rem 0.45rem; color: rgba(226,232,240,0.93); vertical-align: top; border-top: 1px solid rgba(148,163,184,0.16); }
+            .meta-item { display: flex; flex-direction: column; gap: 0.18rem; padding: 0.22rem 0.5rem 0.28rem; background: rgba(13,22,40,0.62); border-radius: 0.45rem; border: 1px solid rgba(148,163,184,0.2); }
+            .meta-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em; color: rgba(203,213,225,0.75); display: flex; align-items: center; gap: 0.25rem; }
+            .meta-label-icon { font-size: 0.78rem; }
+            .meta-value { font-size: 0.88rem; font-weight: 600; color: rgba(226,232,240,0.96); }
+            .meta-value code { font-size: 0.8rem; background: rgba(2,6,23,0.7); padding: 0.1rem 0.4rem; border-radius: 0.35rem; border: 1px solid rgba(148,163,184,0.26); }
+            .results-section { margin-top: 0.45rem; }
+            .results-title { font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.12em; color: rgba(148,163,184,0.85); margin-bottom: 0.3rem; }
+            .results-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; background: rgba(12,22,40,0.6); border-radius: 0.45rem; overflow: hidden; }
+            .results-table th { text-align: left; padding: 0.3rem 0.45rem; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.05em; color: rgba(148,163,184,0.9); background: rgba(30,41,59,0.6); }
+            .results-table td { padding: 0.3rem 0.45rem; border-top: 1px solid rgba(148,163,184,0.16); color: rgba(226,232,240,0.92); }
             .results-table td pre { margin: 0; font-size: 0.78rem; white-space: pre-wrap; background: none; }
-            .results-table details { font-size: 0.74rem; }
+            .results-table tbody tr:hover { background: rgba(59,130,246,0.12); }
             .results-table details summary { cursor: pointer; color: rgba(125,211,252,0.92); }
-            .children { list-style: none; margin: 0.4rem 0 0.2rem 0.9rem; padding: 0; display: grid; gap: 0.3rem; }
-            .event-json { margin-top: 0.45rem; padding: 0.4rem 0.45rem; font-size: 0.78rem; }
-            .event-json summary { cursor: pointer; color: rgba(125,211,252,0.92); }
-            .event-json pre { margin-top: 0.35rem; max-height: 220px; overflow: auto; padding: 0.5rem; background: rgba(15,23,42,0.78); border-radius: 0.45rem; border: 1px solid rgba(148,163,184,0.24); }
-            .empty { text-align: center; padding: 2rem 0; color: rgba(148,163,184,0.7); font-size: 0.88rem; }
+            .results-table details[open] summary { color: rgba(56,189,248,0.95); }
+            .results-table details ul { list-style: none; margin: 0.25rem 0 0; padding: 0; }
+            .results-table details li { margin: 0.18rem 0; display: flex; flex-direction: column; gap: 0.12rem; font-size: 0.74rem; color: rgba(203,213,225,0.88); }
+            .results-table details li::before { content: ""; }
+            .results-table details li pre { font-size: 0.74rem; }
+            .results-table details ul { list-style: none; margin: 0.25rem 0 0; padding: 0; }
+            .results-table details li { margin: 0.18rem 0; display: flex; flex-direction: column; gap: 0.12rem; font-size: 0.74rem; color: rgba(203,213,225,0.88); }
+            .results-table details li pre { font-size: 0.74rem; }
+            .children { list-style: none; margin: 0.45rem 0 0.2rem 0; padding: 0; display: grid; gap: 0.4rem; }
+            .children > li { border-left: 1px solid rgba(148,163,184,0.18); padding-left: 0.75rem; }
+            .event-json { margin-top: 0.45rem; }
+            .event-json summary { cursor: pointer; color: rgba(125,211,252,0.9); font-size: 0.8rem; }
+            .event-json pre { margin-top: 0.35rem; max-height: 220px; overflow: auto; padding: 0.55rem; background: rgba(13,23,42,0.78); border-radius: 0.45rem; border: 1px solid rgba(148,163,184,0.2); font-size: 0.8rem; }
+            .empty { text-align: center; padding: 2rem 0; color: rgba(148,163,184,0.72); font-size: 0.9rem; }
             @media (max-width: 900px) {
-                header, main { padding: 1rem 1.2rem; }
+                header, main { padding: 1rem 1.1rem; }
                 .toolbar input, .toolbar select { min-width: 0; flex: 1 1 140px; }
+                #events-tree { grid-template-columns: 1fr; }
             }
         </style>
     </head>
@@ -173,11 +183,12 @@ async def index() -> str:
                 try { return JSON.parse(raw); } catch { return SAFE_DEFAULT; }
             }
 
-            function renderMetaItem(icon, label, value, options = {}) {
-                const { code = false } = options;
+            function renderMetaItem(label, value, options = {}) {
+                const { code = false, icon = '' } = options;
                 const safeValue = value !== undefined && value !== null && value !== '' ? String(value) : '—';
                 const formatted = code ? `<code>${escapeHtml(safeValue)}</code>` : escapeHtml(safeValue);
-                return `<div class="meta-item"><span class="meta-icon">${icon}</span><span class="meta-label">${escapeHtml(label)}</span><span class="meta-value">${formatted}</span></div>`;
+                const iconHtml = icon ? `<span class="meta-label-icon">${escapeHtml(icon)}</span>` : '';
+                return `<div class="meta-item"><div class="meta-label">${iconHtml}${escapeHtml(label)}</div><div class="meta-value">${formatted}</div></div>`;
             }
 
             function ingestEvents(rows) {
@@ -328,7 +339,6 @@ async def index() -> str:
             function renderResults(results) {
                 return `
                 <div class="results-section">
-                    <h3>Handler Results</h3>
                     <table class="results-table">
                         <thead>
                             <tr>
@@ -352,7 +362,7 @@ async def index() -> str:
                                     <td><pre>${escapeHtml(result.error_repr || '')}</pre></td>
                                     <td>
                                         <details>
-                                            <summary>${result.attempts.length} log entry(ies)</summary>
+                                            <summary>${result.attempts.length} entr${result.attempts.length === 1 ? 'y' : 'ies'}</summary>
                                             <ul>
                                                 ${result.attempts.map((attempt) => `
                                                     <li>
@@ -386,30 +396,34 @@ async def index() -> str:
                 const createdAt = data.event_created_at || '—';
                 const processedAt = data.event_processed_at || '—';
 
-                const summaryBadges = [
+                                const summaryPrimary = [
                     `<span class="pill pill-type">${escapeHtml(node.event_type || 'UnknownEvent')}</span>`,
                     `<span class="pill pill-status pill-${escapeHtml(normalizedStatus)}">${escapeHtml(rawStatus)}</span>`,
                     `<span class="pill pill-muted">🚌 ${escapeHtml(node.eventbus_name || '—')}</span>`,
+                ];
+                if (path) summaryPrimary.push(`<span class="pill pill-muted">🧭 ${escapeHtml(path)}</span>`);
+
+                const summarySecondary = [
                     `<span class="pill pill-muted">ID ${escapeHtml(shortId)}</span>`,
                     `<span class="pill pill-muted">⏱ ${escapeHtml(timeoutDisplay)}</span>`,
-                    `<span class="pill pill-muted">🕒 ${escapeHtml(insertedAt)}</span>`,
-                ].join('');
+                    `<span class="pill pill-muted">🕒 ${escapeHtml(createdAt)}</span>`,
+                    `<span class="pill pill-muted">✅ ${escapeHtml(processedAt)}</span>`,
+                ];
+
+                const summaryBadges = summaryPrimary.concat(summarySecondary).join('');
 
                 const metaItems = [
-                    renderMetaItem('🆔', 'Event ID', node.event_id || '—', { code: true }),
-                    renderMetaItem('👪', 'Parent ID', parentId, { code: true }),
-                    renderMetaItem('🧭', 'Path', path || '—'),
-                    renderMetaItem('📦', 'Schema', schema, { code: true }),
-                    renderMetaItem('🎯', 'Result type', resultType, { code: true }),
-                    renderMetaItem('⏱', 'Timeout', timeoutDisplay),
-                    renderMetaItem('🕒', 'Created', createdAt),
-                    renderMetaItem('✅', 'Processed', processedAt),
+                    renderMetaItem('Event ID', node.event_id || '—', { code: true, icon: '🆔' }),
+                    renderMetaItem('Parent ID', parentId, { code: true, icon: '👪' }),
+                    renderMetaItem('Path', path || '—', { icon: '🧭' }),
+                    renderMetaItem('Schema', schema, { code: true, icon: '📦' }),
+                    renderMetaItem('Result type', resultType, { code: true, icon: '🎯' }),
                 ].join('');
 
                 const resultsSection = node.results.length ? renderResults(node.results) : '';
                 const childrenSection = node.children.length ? `<ul class="children">${node.children.map(renderNode).join('')}</ul>` : '';
                 const eventJson = data && Object.keys(data).length
-                    ? `<details class="event-json"><summary>View full payload</summary><pre>${escapeHtml(JSON.stringify(data, null, 2))}</pre></details>`
+                    ? `<details class="event-json"><summary>Payload</summary><pre>${escapeHtml(JSON.stringify(data, null, 2))}</pre></details>`
                     : '';
 
                 return `

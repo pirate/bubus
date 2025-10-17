@@ -9,7 +9,7 @@ from collections import defaultdict, deque
 from collections.abc import Callable, Sequence
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Literal, TypeVar, cast, overload
+from typing import Any, Literal, TypeGuard, TypeVar, cast, overload
 
 from uuid_extensions import uuid7str  # pyright: ignore[reportMissingImports, reportUnknownVariableType]
 
@@ -27,6 +27,7 @@ from bubus.models import (
     EventHandlerClassMethod,
     EventHandlerFunc,
     EventHandlerMethod,
+    EventResult,
     PythonIdentifierStr,
     PythonIdStr,
     T_Event,
@@ -34,7 +35,6 @@ from bubus.models import (
     UUIDStr,
     get_handler_id,
     get_handler_name,
-    EventResult,
 )
 
 logger = logging.getLogger('bubus')
