@@ -184,13 +184,31 @@ async def test_expect_type_inference():
         request_id: str = 'test123'
 
     # Validate inline isinstance usage works with await expect()
-    async def dispatch_inline():
+    async def dispatch_inline_isinstance():
         await asyncio.sleep(0.01)
-        bus.dispatch(SpecificEvent(request_id='inline'))
+        bus.dispatch(SpecificEvent(request_id='inline-isinstance'))
 
-    inline_task = asyncio.create_task(dispatch_inline())
+    inline_isinstance_task = asyncio.create_task(dispatch_inline_isinstance())
     assert isinstance(await bus.expect(SpecificEvent, timeout=1.0), SpecificEvent)
-    await inline_task
+    await inline_isinstance_task
+
+    # Validate inline assert_type usage works with await expect()
+    async def dispatch_inline_assert_type():
+        await asyncio.sleep(0.01)
+        bus.dispatch(SpecificEvent(request_id='inline-assert-type'))
+
+    inline_type_task = asyncio.create_task(dispatch_inline_assert_type())
+    assert_type(await bus.expect(SpecificEvent, timeout=1.0), SpecificEvent)
+    await inline_type_task
+
+    # Validate assert_type with isinstance expression
+    async def dispatch_inline_isinstance_type():
+        await asyncio.sleep(0.01)
+        bus.dispatch(SpecificEvent(request_id='inline-isinstance-type'))
+
+    inline_isinstance_type_task = asyncio.create_task(dispatch_inline_isinstance_type())
+    assert_type(isinstance(await bus.expect(SpecificEvent, timeout=1.0), SpecificEvent), bool)
+    await inline_isinstance_type_task
 
     # Start a task that will dispatch the event
     async def dispatch_later():
@@ -268,6 +286,8 @@ async def test_query_type_inference():
     await bus.wait_until_idle()
 
     assert isinstance(await bus.query(QueryEvent, since=10), QueryEvent)
+    assert_type(await bus.query(QueryEvent, since=10), QueryEvent)
+    assert_type(isinstance(await bus.query(QueryEvent, since=10), QueryEvent), bool)
     queried = await bus.query(QueryEvent, since=10)
 
     assert queried is not None
@@ -315,6 +335,15 @@ async def test_dispatch_type_inference():
     another_event = CustomEvent()
     assert isinstance(bus.dispatch(another_event), CustomEvent)
 
+    # Validate assert_type captures dispatch() return type when called inline
+    type_event = CustomEvent()
+    dispatched_type_event = bus.dispatch(type_event)
+    assert_type(dispatched_type_event, CustomEvent)
+
+    # Validate assert_type with isinstance expression using dispatch()
+    isinstance_type_event = CustomEvent()
+    assert_type(isinstance(bus.dispatch(isinstance_type_event), CustomEvent), bool)
+
     # We should be able to use it without casting
     result = await dispatched_event.event_result()
 
@@ -330,6 +359,8 @@ async def test_dispatch_type_inference():
     # After: event = bus.dispatch(CustomEvent())  # Type is preserved!
 
     await another_event.event_result()
+    await type_event.event_result()
+    await isinstance_type_event.event_result()
 
     print(f'✅ Dispatch correctly preserved type: {type(dispatched_event).__name__}')
     print('✅ No cast() needed - type inference works!')
