@@ -295,15 +295,15 @@ async def on_generate_invoice_pdf(event: GenerateInvoiceEvent) -> pdf:
     # wait for the response event to be fired by the RPC client
     is_our_response = lambda response_event: response_event.request_id == request_event.request_id
     is_succesful = lambda response_event: response_event.invoice_id == event.invoice_id and response_event.invoice_url
-    try:
-        response_event: APIResponseEvent = await bus.expect(
-            APIResponseEvent,                                         # wait for events of this type (also accepts str name)
-            include=lambda e: is_our_response(e) and is_succesful(e), # only include events that match a certain filter func
-            exclude=lambda e: e.status != 'retrying',                 # optionally exclude certain events, overrides include
-            timeout=30,                                               # raises asyncio.TimeoutError if no match is seen within 30sec
-        )
-    except TimeoutError:
+    response_event: APIResponseEvent | None = await bus.expect(
+        APIResponseEvent,                                         # wait for events of this type (also accepts str name)
+        include=lambda e: is_our_response(e) and is_succesful(e), # only include events that match a certain filter func
+        exclude=lambda e: e.status != 'retrying',                 # optionally exclude certain events, overrides include
+        timeout=30,                                               # returns None if no match is seen within 30 sec
+    )
+    if response_event is None:
         await bus.dispatch(TimedOutError(msg='timed out while waiting for response from server', request_id=request_event.id))
+        return None
 
     return response_event.invoice_url
 
@@ -312,6 +312,32 @@ event_bus.on(GenerateInvoiceEvent, on_generate_invoice_pdf)
 
 > [!IMPORTANT]
 > `expect()` resolves when the event is first *dispatched* to the `EventBus`, not when it completes. `await response_event` to get the completed event.
+> If the timeout elapses with no match, `expect()` returns `None`.
+
+<br/>
+
+### 🔁 Event Debouncing
+
+Avoid re-running expensive work by checking recent history before dispatching. Combine `query()`, `expect()`, and `dispatch()` to coalesce bursts of identical events:
+
+```python
+from datetime import timedelta
+
+debounced_event = (
+    await bus.query(SyncWithServerEvent, since=timedelta(seconds=10), include=lambda e: e.user_id == user.id)
+    or await bus.expect(SyncWithServerEvent, timeout=5, include=lambda e: e.user_id == user.id)
+    or await bus.dispatch(SyncWithServerEvent(user_id=user.id))
+)
+
+if debounced_event is None:
+    raise RuntimeError('Sync dispatch failed unexpectedly')
+
+print(f'Last sync completed at {debounced_event.event_completed_at}')
+```
+
+- `query()` searches the most recent completed events (newest-first) in memory.
+- `expect()` waits for an in-flight event if none were found in the look-back window.
+- Only when both checks miss do you emit a fresh event, satisfying typical debounce requirements without extra state.
 
 <br/>
 
@@ -595,7 +621,22 @@ result = await event  # await the pending Event to get the completed Event
 
 **Note:** When `max_history_size` is set, EventBus enforces a hard limit of 100 pending events (queue + processing) to prevent runaway memory usage. Dispatch will raise `RuntimeError` if this limit is exceeded.
 
-##### `expect(event_type: str | Type[BaseEvent], timeout: float | None=None, predicate: Callable[[BaseEvent], bool]=None) -> BaseEvent`
+##### `query(event_type: str | Type[BaseEvent], *, include: Callable[[BaseEvent], bool] | None=None, exclude: Callable[[BaseEvent], bool] | None=None, since: timedelta | float | int | None=None) -> BaseEvent | None`
+
+Return the most recently completed event in history that matches the type and optional predicates. Returns `None` if nothing qualifies.
+
+```python
+recent_sync = await bus.query(
+    SyncEvent,
+    since=timedelta(seconds=30),
+    include=lambda e: e.account_id == account_id,
+)
+
+if recent_sync is not None:
+    print('We already synced recently, skipping')
+```
+
+##### `expect(event_type: str | Type[BaseEvent], timeout: float | None=None, predicate: Callable[[BaseEvent], bool]=None) -> BaseEvent | None`
 
 Wait for a specific event to occur.
 
@@ -608,6 +649,9 @@ event = await bus.expect(
     'UserEvent',
     predicate=lambda e: e.user_id == 'specific_user'
 )
+
+if event is None:
+    print('No matching event arrived within 30 seconds')
 ```
 
 ##### `wait_until_idle(timeout: float | None=None)`

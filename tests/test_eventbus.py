@@ -19,7 +19,7 @@ import json
 import os
 import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any
 
 import pytest
@@ -1265,8 +1265,8 @@ class TestExpectMethod:
     async def test_expect_timeout(self, eventbus):
         """Test expect timeout behavior"""
         # Expect an event that will never come
-        with pytest.raises(TimeoutError):
-            await eventbus.expect('NonExistentEvent', timeout=0.1)
+        result = await eventbus.expect('NonExistentEvent', timeout=0.1)
+        assert result is None
 
     async def test_expect_with_model_class(self, eventbus):
         """Test expect with model class instead of string"""
@@ -1316,10 +1316,8 @@ class TestExpectMethod:
         initial_handlers = len(eventbus.handlers.get('TestEvent', []))
 
         # Create an expect that times out
-        try:
-            await eventbus.expect('TestEvent', timeout=0.1)
-        except TimeoutError:
-            pass
+        result = await eventbus.expect('TestEvent', timeout=0.1)
+        assert result is None
 
         # Handler should be cleaned up
         assert len(eventbus.handlers.get('TestEvent', [])) == initial_handlers
@@ -1371,6 +1369,93 @@ class TestExpectMethod:
         await eventbus.wait_until_idle()
         assert processing_complete is True
 
+
+class TestQueryMethod:
+    """Tests for the query() helper."""
+
+    async def test_query_returns_most_recent_completed(self, eventbus):
+        # Dispatch two events and ensure the newest is returned
+        eventbus.dispatch(UserActionEvent(action='first', user_id='u1'))
+        latest = eventbus.dispatch(UserActionEvent(action='second', user_id='u2'))
+        await eventbus.wait_until_idle()
+
+        match = await eventbus.query('UserActionEvent', since=timedelta(seconds=10))
+        assert match is not None
+        assert match.event_id == latest.event_id
+
+    async def test_query_respects_since_window(self, eventbus):
+        event = eventbus.dispatch(UserActionEvent(action='old', user_id='u1'))
+        await eventbus.wait_until_idle()
+        event.event_created_at -= timedelta(seconds=30)
+
+        match = await eventbus.query('UserActionEvent', since=timedelta(seconds=10))
+        assert match is None
+
+    async def test_query_skips_incomplete_events(self, eventbus):
+        processing = asyncio.Event()
+
+        async def slow_handler(evt: UserActionEvent) -> None:
+            await asyncio.sleep(0.05)
+            processing.set()
+
+        eventbus.on('UserActionEvent', slow_handler)
+
+        pending_event = eventbus.dispatch(UserActionEvent(action='slow', user_id='u1'))
+
+        # While the handler is running, query should return None
+        assert await eventbus.query('UserActionEvent', since=timedelta(seconds=10)) is None
+
+        await pending_event
+        await processing.wait()
+
+        match = await eventbus.query('UserActionEvent', since=timedelta(seconds=10))
+        assert match is not None
+        assert match.event_id == pending_event.event_id
+
+
+class TestDebouncePatterns:
+    """End-to-end scenarios for debounce-style flows."""
+
+    class DebounceEvent(BaseEvent):
+        user_id: int
+
+    async def test_debounce_prefers_recent_history(self, eventbus):
+        # First event completes
+        initial = await eventbus.dispatch(self.DebounceEvent(user_id=123))
+        await eventbus.wait_until_idle()
+
+        # Compose the debounce pattern: query -> expect -> dispatch
+        resolved = (
+            await eventbus.query(self.DebounceEvent, since=timedelta(seconds=10))
+            or await eventbus.expect(self.DebounceEvent, timeout=0.05)
+            or await eventbus.dispatch(self.DebounceEvent(user_id=123))
+        )
+
+        assert resolved is not None
+        assert resolved.event_id == initial.event_id
+
+        total_events = sum(
+            1 for event in eventbus.event_history.values() if isinstance(event, self.DebounceEvent)
+        )
+        assert total_events == 1
+
+    async def test_debounce_dispatches_when_recent_missing(self, eventbus):
+        resolved = (
+            await eventbus.query(self.DebounceEvent, since=timedelta(seconds=1))
+            or await eventbus.expect(self.DebounceEvent, timeout=0.05)
+            or await eventbus.dispatch(self.DebounceEvent(user_id=999))
+        )
+
+        assert resolved is not None
+        assert isinstance(resolved, self.DebounceEvent)
+        assert resolved.user_id == 999
+
+        await eventbus.wait_until_idle()
+
+        total_events = sum(
+            1 for event in eventbus.event_history.values() if isinstance(event, self.DebounceEvent)
+        )
+        assert total_events == 1
     async def test_expect_with_complex_predicate(self, eventbus):
         """Test expect with complex predicate logic"""
         events_seen = []

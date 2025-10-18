@@ -49,10 +49,12 @@ class QueueShutDown(Exception):
     pass
 
 
-QueueEntryType = TypeVar('QueueEntryType', bound='BaseEvent[Any]')
-T_ExpectedEvent = TypeVar('T_ExpectedEvent', bound='BaseEvent[Any]')
+QueueEntryType = TypeVar('QueueEntryType', bound=BaseEvent[Any])
+T_ExpectedEvent = TypeVar('T_ExpectedEvent', bound=BaseEvent[Any])
+T_QueryEvent = TypeVar('T_QueryEvent', bound=BaseEvent[Any])
+T_QueryEvent = TypeVar('T_QueryEvent', bound=BaseEvent[Any])
 
-EventPatternType = PythonIdentifierStr | Literal['*'] | type['BaseEvent[Any]']
+EventPatternType = PythonIdentifierStr | Literal['*'] | type[BaseEvent[Any]]
 
 
 
@@ -60,13 +62,13 @@ class EventBusMiddleware:
     """Hookable lifecycle interface for observing or extending EventBus execution."""
 
     async def pre_event_handler_started(
-        self, eventbus: 'EventBus', event: 'BaseEvent[Any]', event_result: EventResult[Any]
+        self, eventbus: 'EventBus', event: BaseEvent[Any], event_result: EventResult[Any]
     ) -> None:
         """Called just before a handler begins execution."""
         return None
 
     async def post_event_handler_completed(
-        self, eventbus: 'EventBus', event: 'BaseEvent[Any]', event_result: EventResult[Any]
+        self, eventbus: 'EventBus', event: BaseEvent[Any], event_result: EventResult[Any]
     ) -> None:
         """Called after a handler completes successfully."""
         return None
@@ -74,7 +76,7 @@ class EventBusMiddleware:
     async def post_event_handler_failed(
         self,
         eventbus: 'EventBus',
-        event: 'BaseEvent[Any]',
+        event: BaseEvent[Any],
         event_result: EventResult[Any],
         error: BaseException,
     ) -> None:
@@ -82,7 +84,7 @@ class EventBusMiddleware:
         return None
 
     async def post_event_snapshot_recorded(
-        self, eventbus: 'EventBus', event: 'BaseEvent[Any]', phase: str
+        self, eventbus: 'EventBus', event: BaseEvent[Any], phase: str
     ) -> None:
         """Called whenever an event snapshot is persisted."""
         return None
@@ -90,14 +92,14 @@ class EventBusMiddleware:
     async def post_event_handler_snapshot_recorded(
         self,
         eventbus: 'EventBus',
-        event: 'BaseEvent[Any]',
+        event: BaseEvent[Any],
         event_result: EventResult[Any],
         phase: str,
     ) -> None:
         """Called whenever a handler snapshot is persisted."""
         return None
 
-    async def post_event_completed(self, eventbus: 'EventBus', event: 'BaseEvent[Any]') -> None:
+    async def post_event_completed(self, eventbus: 'EventBus', event: BaseEvent[Any]) -> None:
         """Called after an event and all of its handlers have finished."""
         return None
 
@@ -188,7 +190,7 @@ class CleanShutdownQueue(asyncio.Queue[QueueEntryType]):
 
 
 # Context variable to track the current event being processed (for setting event_parent_id from inside a child event)
-_current_event_context: ContextVar['BaseEvent[Any] | None'] = ContextVar('current_event', default=None)
+_current_event_context: ContextVar[BaseEvent[Any] | None] = ContextVar('current_event', default=None)
 # Context variable to track if we're inside a handler (for nested event detection)
 inside_handler_context: ContextVar[bool] = ContextVar('inside_handler', default=False)
 # Context variable to track if we hold the global lock (for re-entrancy across tasks)
@@ -319,9 +321,9 @@ class EventBus:
 
     # Runtime State
     id: UUIDStr = '00000000-0000-0000-0000-000000000000'
-    handlers: dict[PythonIdStr, list[ContravariantEventHandler['BaseEvent[Any]']]]  # collected by .on(<event_type>, <handler>)
-    event_queue: CleanShutdownQueue['BaseEvent[Any]'] | None
-    event_history: EventHistory['BaseEvent[Any]']
+    handlers: dict[PythonIdStr, list[ContravariantEventHandler[BaseEvent[Any]]]]
+    event_queue: CleanShutdownQueue[BaseEvent[Any]] | None
+    event_history: EventHistory[BaseEvent[Any]]
 
     _is_running: bool = False
     _runloop_task: asyncio.Task[None] | None = None
@@ -452,7 +454,7 @@ class EventBus:
 
     # Middleware fan-out helpers ------------------------------------------- #
     async def _middlewares_post_event_snapshot_recorded(
-        self, event: 'BaseEvent[Any]', phase: str
+        self, event: BaseEvent[Any], phase: str
     ) -> None:
         for middleware in self._middlewares:
             await self._call_middleware_hook(
@@ -460,7 +462,7 @@ class EventBus:
             )
 
     async def _middlewares_post_event_handler_snapshot_recorded(
-        self, event: 'BaseEvent[Any]', event_result: EventResult[Any], phase: str
+        self, event: BaseEvent[Any], event_result: EventResult[Any], phase: str
     ) -> None:
         for middleware in self._middlewares:
             await self._call_middleware_hook(
@@ -472,14 +474,14 @@ class EventBus:
                 phase,
             )
 
-    async def _maybe_record_event_started(self, event: 'BaseEvent[Any]') -> None:
+    async def _maybe_record_event_started(self, event: BaseEvent[Any]) -> None:
         if getattr(event, '_history_started_logged', False):
             return
         setattr(event, '_history_started_logged', True)
         await self._middlewares_post_event_snapshot_recorded(event, 'started')
 
     async def _middlewares_pre_event_handler_started(
-        self, event: 'BaseEvent[Any]', event_result: EventResult[Any]
+        self, event: BaseEvent[Any], event_result: EventResult[Any]
     ) -> None:
         for middleware in self._middlewares:
             await self._call_middleware_hook(
@@ -487,7 +489,7 @@ class EventBus:
             )
 
     async def _middlewares_post_event_handler_completed(
-        self, event: 'BaseEvent[Any]', event_result: EventResult[Any]
+        self, event: BaseEvent[Any], event_result: EventResult[Any]
     ) -> None:
         for middleware in self._middlewares:
             await self._call_middleware_hook(
@@ -495,18 +497,18 @@ class EventBus:
             )
 
     async def _middlewares_post_event_handler_failed(
-        self, event: 'BaseEvent[Any]', event_result: EventResult[Any], error: BaseException
+        self, event: BaseEvent[Any], event_result: EventResult[Any], error: BaseException
     ) -> None:
         for middleware in self._middlewares:
             await self._call_middleware_hook(
                 middleware, 'post_event_handler_failed', self, event, event_result, error
             )
 
-    async def _middlewares_post_event_completed(self, event: 'BaseEvent[Any]') -> None:
+    async def _middlewares_post_event_completed(self, event: BaseEvent[Any]) -> None:
         for middleware in self._middlewares:
             await self._call_middleware_hook(middleware, 'post_event_completed', self, event)
 
-    async def _dispatch_after_event_hooks(self, event: 'BaseEvent[Any]') -> None:
+    async def _dispatch_after_event_hooks(self, event: BaseEvent[Any]) -> None:
         if getattr(event, '_after_event_hooks_run', False):
             return
 
@@ -532,7 +534,7 @@ class EventBus:
         await self._middlewares_post_event_completed(event)
 
     @property
-    def events_pending(self) -> list['BaseEvent[Any]']:
+    def events_pending(self) -> list[BaseEvent[Any]]:
         """Get events that haven't started processing yet (does not include events that have not even finished dispatching yet in self.event_queue)"""
         return [
             event
@@ -541,7 +543,7 @@ class EventBus:
         ]
 
     @property
-    def events_started(self) -> list['BaseEvent[Any]']:
+    def events_started(self) -> list[BaseEvent[Any]]:
         """Get events currently being processed"""
         return [
             event
@@ -550,7 +552,7 @@ class EventBus:
         ]
 
     @property
-    def events_completed(self) -> list['BaseEvent[Any]']:
+    def events_completed(self) -> list[BaseEvent[Any]]:
         """Get events that have completed processing"""
         return [event for event in self.event_history.values() if event.event_completed_at is not None]
 
@@ -575,11 +577,11 @@ class EventBus:
 
     # 5. EventHandlerClassMethod[BaseEvent] - sync classmethod taking cls and event
     @overload
-    def on(self, event_pattern: EventPatternType, handler: EventHandlerClassMethod['BaseEvent[Any]']) -> None: ...
+    def on(self, event_pattern: EventPatternType, handler: EventHandlerClassMethod[BaseEvent[Any]]) -> None: ...
 
     # 6. AsyncEventHandlerClassMethod[BaseEvent] - async classmethod taking cls and event
     @overload
-    def on(self, event_pattern: EventPatternType, handler: AsyncEventHandlerClassMethod['BaseEvent[Any]']) -> None: ...
+    def on(self, event_pattern: EventPatternType, handler: AsyncEventHandlerClassMethod[BaseEvent[Any]]) -> None: ...
 
     # I dont think this is needed, but leaving it here for now
     # 9. Coroutine[Any, Any, Any] - direct coroutine
@@ -591,11 +593,11 @@ class EventBus:
         event_pattern: EventPatternType,
         handler: (  # TypeAlias with args doesnt work on overloaded signature, has to be defined inline
             EventHandlerFunc[T_Event]
-            | AsyncEventHandlerFunc['BaseEvent[Any]']
+            | AsyncEventHandlerFunc[BaseEvent[Any]]
             | EventHandlerMethod[T_Event]
-            | AsyncEventHandlerMethod['BaseEvent[Any]']
-            | EventHandlerClassMethod['BaseEvent[Any]']
-            | AsyncEventHandlerClassMethod['BaseEvent[Any]']
+            | AsyncEventHandlerMethod[BaseEvent[Any]]
+            | EventHandlerClassMethod[BaseEvent[Any]]
+            | AsyncEventHandlerClassMethod[BaseEvent[Any]]
         ),
     ) -> None:
         """
@@ -759,7 +761,7 @@ class EventBus:
 
         return event
 
-    def _event_matches_pattern(self, event: 'BaseEvent[Any]', pattern: EventPatternType) -> bool:
+    def _event_matches_pattern(self, event: BaseEvent[Any], pattern: EventPatternType) -> bool:
         if pattern == '*':
             return True
         if isinstance(pattern, str):
@@ -770,30 +772,30 @@ class EventBus:
     async def expect(
         self,
         event_type: type[T_ExpectedEvent],
-        include: Callable[['BaseEvent[Any]' | T_ExpectedEvent], bool] = lambda _: True,
-        exclude: Callable[['BaseEvent[Any]' | T_ExpectedEvent], bool] = lambda _: False,
-        predicate: Callable[['BaseEvent[Any]' | T_ExpectedEvent], bool] = lambda _: True,  # deprecated, alias for include
+        include: Callable[[BaseEvent[Any] | T_ExpectedEvent], bool] = lambda _: True,
+        exclude: Callable[[BaseEvent[Any] | T_ExpectedEvent], bool] = lambda _: False,
+        predicate: Callable[[BaseEvent[Any] | T_ExpectedEvent], bool] = lambda _: True,
         timeout: float | None = None,
-    ) -> T_ExpectedEvent: ...
+    ) -> T_ExpectedEvent | None: ...
 
     @overload
     async def expect(
         self,
         event_type: PythonIdentifierStr,
-        include: Callable[['BaseEvent[Any]'], bool] = lambda _: True,
-        exclude: Callable[['BaseEvent[Any]'], bool] = lambda _: False,
-        predicate: Callable[['BaseEvent[Any]'], bool] = lambda _: True,  # deprecated, alias for include
+        include: Callable[[BaseEvent[Any]], bool] = lambda _: True,
+        exclude: Callable[[BaseEvent[Any]], bool] = lambda _: False,
+        predicate: Callable[[BaseEvent[Any]], bool] = lambda _: True,
         timeout: float | None = None,
-    ) -> 'BaseEvent[Any]': ...
+    ) -> BaseEvent[Any] | None: ...
 
     async def expect(
         self,
         event_type: PythonIdentifierStr | type[T_ExpectedEvent],
-        include: Callable[['BaseEvent[Any]'], bool] = lambda _: True,
-        exclude: Callable[['BaseEvent[Any]'], bool] = lambda _: False,
-        predicate: Callable[['BaseEvent[Any]'], bool] = lambda _: True,  # deprecated, alias for include
+        include: Callable[[BaseEvent[Any]], bool] = lambda _: True,
+        exclude: Callable[[BaseEvent[Any]], bool] = lambda _: False,
+        predicate: Callable[[BaseEvent[Any]], bool] = lambda _: True,
         timeout: float | None = None,
-    ) -> 'BaseEvent[Any]' | T_ExpectedEvent:
+    ) -> BaseEvent[Any] | T_ExpectedEvent | None:
         """
         Wait for an event matching the given type/pattern with optional filters.
 
@@ -805,10 +807,7 @@ class EventBus:
                 timeout: Maximum time to wait in seconds as a float (None = wait forever)
 
         Returns:
-                The first matching event
-
-        Raises:
-                asyncio.TimeoutError: If timeout is reached before a matching event
+                The first matching event, or None if no match arrives before the timeout
 
         Example:
                 # Wait for any response event
@@ -828,14 +827,14 @@ class EventBus:
                         timeout=30
                 )
         """
-        future: asyncio.Future['BaseEvent[Any]'] = asyncio.Future()
+        future: asyncio.Future[BaseEvent[Any]] = asyncio.Future()
 
         # Handle backwards compatibility: merge predicate into include
         if predicate is not None:  # type: ignore[conditionAlwaysTrue]
             original_include = include
             include = lambda e, orig=original_include, pred=predicate: orig(e) and pred(e)
 
-        def notify_expect_handler(event: 'BaseEvent[Any]') -> None:
+        def notify_expect_handler(event: BaseEvent[Any]) -> None:
             """Handler that resolves the future when a matching event is found"""
             if not future.done() and include(event) and not exclude(event):
                 future.set_result(event)
@@ -867,6 +866,78 @@ class EventBus:
             event_key: str = event_type.__name__ if isinstance(event_type, type) else str(event_type)  # pyright: ignore[reportUnknownMemberType, reportPartialTypeErrors]
             if event_key in self.handlers and notify_expect_handler in self.handlers[event_key]:
                 self.handlers[event_key].remove(notify_expect_handler)
+
+    @overload
+    async def query(
+        self,
+        event_type: type[T_QueryEvent],
+        include: Callable[[T_QueryEvent], bool] = lambda _: True,
+        exclude: Callable[[T_QueryEvent], bool] = lambda _: False,
+        predicate: Callable[[T_QueryEvent], bool] = lambda _: True,
+        since: timedelta | float | int | None = None,
+    ) -> T_QueryEvent | None: ...
+
+    @overload
+    async def query(
+        self,
+        event_type: PythonIdentifierStr | Literal['*'],
+        include: Callable[[BaseEvent[Any]], bool] = lambda _: True,
+        exclude: Callable[[BaseEvent[Any]], bool] = lambda _: False,
+        predicate: Callable[[BaseEvent[Any]], bool] = lambda _: True,
+        since: timedelta | float | int | None = None,
+    ) -> BaseEvent[Any] | None: ...
+
+    async def query(
+        self,
+        event_type: EventPatternType,
+        include: Callable[[BaseEvent[Any]], bool] = lambda _: True,
+        exclude: Callable[[BaseEvent[Any]], bool] = lambda _: False,
+        predicate: Callable[[BaseEvent[Any]], bool] = lambda _: True,
+        since: timedelta | float | int | None = None,
+    ) -> BaseEvent[Any] | T_QueryEvent | None:
+        """Return the most recent completed event matching the filters, or None if not found."""
+
+        if predicate is not None:  # type: ignore[truthy-function]
+            original_include = include
+
+            def combined_include(event: BaseEvent[Any]) -> bool:
+                return original_include(event) and predicate(event)
+
+            include = combined_include
+
+        if isinstance(since, (int, float)):
+            since = timedelta(seconds=float(since))
+
+        cutoff: datetime | None = None
+        if since is not None:
+            if since < timedelta(0):
+                raise ValueError('since must be non-negative')
+            cutoff = datetime.now(UTC) - since
+
+        events = list(self.event_history.values())
+        for event in reversed(events):
+            if cutoff is not None and event.event_created_at < cutoff:
+                break
+
+            if event.event_completed_at is None:
+                continue
+
+            if not self._event_matches_pattern(event, event_type):
+                continue
+
+            if exclude(event):
+                continue
+
+            if not include(event):
+                continue
+
+            if isinstance(event_type, type):
+                return cast(T_QueryEvent, event)
+            return event
+
+        return None
+
+
 
     def _start(self) -> None:
         """Start the event bus if not already running"""
@@ -915,7 +986,7 @@ class EventBus:
                 if self.event_queue is None:
                     # Set queue size based on whether we have limits
                     queue_size = 50 if self.max_history_size is not None else 0  # 0 = unlimited
-                    self.event_queue = CleanShutdownQueue['BaseEvent[Any]'](maxsize=queue_size)
+                    self.event_queue = CleanShutdownQueue[BaseEvent[Any]](maxsize=queue_size)
                     self._on_idle = asyncio.Event()
                     self._on_idle.clear()  # Start in a busy state unless we confirm queue is empty by running step() at least once
 
@@ -1146,7 +1217,7 @@ class EventBus:
         logger.debug(f'✅ {self}.step({event}) COMPLETE')
         return event
 
-    async def process_event(self, event: 'BaseEvent[Any]', timeout: float | None = None) -> None:
+    async def process_event(self, event: BaseEvent[Any], timeout: float | None = None) -> None:
         """Process a single event (assumes lock is already held)"""
         # Get applicable handlers
         applicable_handlers = self._get_applicable_handlers(event)
@@ -1199,7 +1270,7 @@ class EventBus:
         if self.max_history_size:
             self.cleanup_event_history()
 
-    def _get_applicable_handlers(self, event: 'BaseEvent[Any]') -> dict[str, EventHandler]:
+    def _get_applicable_handlers(self, event: BaseEvent[Any]) -> dict[str, EventHandler]:
         """Get all handlers that should process the given event, filtering out those that would create loops"""
         applicable_handlers: list[EventHandler] = []
 
@@ -1223,7 +1294,7 @@ class EventBus:
         return filtered_handlers
 
     def _enter_handler_execution_context(
-        self, event: 'BaseEvent[Any]', handler_id: str
+        self, event: BaseEvent[Any], handler_id: str
     ) -> tuple[contextvars.Token[Any], contextvars.Token[bool], contextvars.Token[str | None]]:
         event_token = _current_event_context.set(event)
         inside_handler_token = inside_handler_context.set(True)
@@ -1241,7 +1312,7 @@ class EventBus:
 
     async def _execute_handlers(
         self,
-        event: 'BaseEvent[Any]',
+        event: BaseEvent[Any],
         handlers: dict[PythonIdStr, EventHandler] | None = None,
         timeout: float | None = None,
     ) -> None:
@@ -1358,7 +1429,7 @@ class EventBus:
             )
             raise
 
-    def _would_create_loop(self, event: 'BaseEvent[Any]', handler: EventHandler) -> bool:
+    def _would_create_loop(self, event: BaseEvent[Any], handler: EventHandler) -> bool:
         """Check if calling this handler would create a loop"""
 
         assert inspect.isfunction(handler) or inspect.iscoroutinefunction(handler) or inspect.ismethod(handler), (
@@ -1415,7 +1486,7 @@ class EventBus:
         return False
 
     def _handler_dispatched_ancestor(
-        self, event: 'BaseEvent[Any]', handler_id: str, visited: set[str] | None = None, depth: int = 0
+        self, event: BaseEvent[Any], handler_id: str, visited: set[str] | None = None, depth: int = 0
     ) -> int:
         """Check how many times this handler appears in the ancestry chain. Returns the depth count."""
         # Prevent infinite recursion in case of circular parent references
@@ -1487,9 +1558,9 @@ class EventBus:
             return 0
 
         # Separate events by status
-        pending_events: list[tuple[str, 'BaseEvent[Any]']] = []
-        started_events: list[tuple[str, 'BaseEvent[Any]']] = []
-        completed_events: list[tuple[str, 'BaseEvent[Any]']] = []
+        pending_events: list[tuple[str, BaseEvent[Any]]] = []
+        started_events: list[tuple[str, BaseEvent[Any]]] = []
+        completed_events: list[tuple[str, BaseEvent[Any]]] = []
 
         for event_id, event in self.event_history.items():
             if event.event_status == 'pending':

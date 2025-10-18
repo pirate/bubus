@@ -240,6 +240,29 @@ async def test_expect_type_inference():
     await bus.stop(clear=True)
 
 
+async def test_query_type_inference():
+    """Test that EventBus.query() returns the correct typed event."""
+    print('\n=== Test Query Type Inference ===')
+
+    bus = EventBus(name='query_type_test_bus')
+
+    class QueryEvent(BaseEvent[str]):
+        pass
+
+    # Dispatch an event so it appears in history
+    event = bus.dispatch(QueryEvent())
+    await bus.wait_until_idle()
+
+    queried = await bus.query(QueryEvent, since=10)
+
+    assert queried is not None
+    assert_type(queried, QueryEvent)
+    assert queried.event_id == event.event_id
+
+    print(f'✅ Query correctly preserved type: {type(queried).__name__}')
+    await bus.stop(clear=True)
+
+
 async def test_dispatch_type_inference():
     """Test that EventBus.dispatch() returns the same type as its input."""
     print('\n=== Test Dispatch Type Inference ===')
@@ -298,6 +321,7 @@ async def test_typed_event_results():
     await test_no_casting_when_no_result_type()
     await test_result_type_stored_in_event_result()
     await test_expect_type_inference()
+    await test_query_type_inference()
     await test_dispatch_type_inference()
     print('\n🎉 All typed event result tests passed!')
 
