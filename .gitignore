@@ -27,7 +27,7 @@ dist/
 htmlcov/
 coverage.xml
 *.cover
-
+*.sqlite*
 
 # Secrets and sensitive files
 secrets.env
