@@ -183,6 +183,15 @@ async def test_expect_type_inference():
     class SpecificEvent(BaseEvent[CustomResult]):
         request_id: str = 'test123'
 
+    # Validate inline isinstance usage works with await expect()
+    async def dispatch_inline():
+        await asyncio.sleep(0.01)
+        bus.dispatch(SpecificEvent(request_id='inline'))
+
+    inline_task = asyncio.create_task(dispatch_inline())
+    assert isinstance(await bus.expect(SpecificEvent, timeout=1.0), SpecificEvent)
+    await inline_task
+
     # Start a task that will dispatch the event
     async def dispatch_later():
         await asyncio.sleep(0.01)
@@ -193,6 +202,7 @@ async def test_expect_type_inference():
     # Use expect with the event class - should return SpecificEvent type
     expected_event = await bus.expect(SpecificEvent, timeout=1.0)
     assert expected_event is not None
+    assert isinstance(expected_event, SpecificEvent)
 
     # Type checking - this should work without cast
     assert_type(expected_event, SpecificEvent)  # Verify type is SpecificEvent, not BaseEvent[Any]
@@ -218,6 +228,7 @@ async def test_expect_type_inference():
     assert filtered_event is not None
 
     assert_type(filtered_event, SpecificEvent)  # Should still be SpecificEvent
+    assert isinstance(filtered_event, SpecificEvent)
     assert type(filtered_event) is SpecificEvent
     assert filtered_event.request_id == 'correct'
 
@@ -256,9 +267,11 @@ async def test_query_type_inference():
     event = bus.dispatch(QueryEvent())
     await bus.wait_until_idle()
 
+    assert isinstance(await bus.query(QueryEvent, since=10), QueryEvent)
     queried = await bus.query(QueryEvent, since=10)
 
     assert queried is not None
+    assert isinstance(queried, QueryEvent)
     assert_type(queried, QueryEvent)
     assert queried.event_id == event.event_id
 
@@ -283,6 +296,7 @@ async def test_dispatch_type_inference():
 
     # Dispatch should return the same type WITHOUT needing cast()
     dispatched_event = bus.dispatch(original_event)
+    assert isinstance(dispatched_event, CustomEvent)
 
     # Type checking - this should work without cast
     assert_type(dispatched_event, CustomEvent)  # Should be CustomEvent, not BaseEvent[Any]
@@ -297,6 +311,10 @@ async def test_dispatch_type_inference():
 
     bus.on('CustomEvent', handler)
 
+    # Validate inline isinstance usage works with dispatch()
+    another_event = CustomEvent()
+    assert isinstance(bus.dispatch(another_event), CustomEvent)
+
     # We should be able to use it without casting
     result = await dispatched_event.event_result()
 
@@ -310,6 +328,8 @@ async def test_dispatch_type_inference():
     # Demonstrate the improvement - no cast needed!
     # Before: event = cast(CustomEvent, bus.dispatch(CustomEvent()))
     # After: event = bus.dispatch(CustomEvent())  # Type is preserved!
+
+    await another_event.event_result()
 
     print(f'✅ Dispatch correctly preserved type: {type(dispatched_event).__name__}')
     print('✅ No cast() needed - type inference works!')

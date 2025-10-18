@@ -871,9 +871,9 @@ class EventBus:
     async def query(
         self,
         event_type: type[T_QueryEvent],
-        include: Callable[[T_QueryEvent], bool] = lambda _: True,
-        exclude: Callable[[T_QueryEvent], bool] = lambda _: False,
-        predicate: Callable[[T_QueryEvent], bool] = lambda _: True,
+        include: Callable[[BaseEvent[Any] | T_QueryEvent], bool] = lambda _: True,
+        exclude: Callable[[BaseEvent[Any] | T_QueryEvent], bool] = lambda _: False,
+        predicate: Callable[[BaseEvent[Any] | T_QueryEvent], bool] = lambda _: True,
         since: timedelta | float | int | None = None,
     ) -> T_QueryEvent | None: ...
 
@@ -889,7 +889,7 @@ class EventBus:
 
     async def query(
         self,
-        event_type: EventPatternType,
+        event_type: PythonIdentifierStr | Literal['*'] | type[T_QueryEvent],
         include: Callable[[BaseEvent[Any]], bool] = lambda _: True,
         exclude: Callable[[BaseEvent[Any]], bool] = lambda _: False,
         predicate: Callable[[BaseEvent[Any]], bool] = lambda _: True,
@@ -931,8 +931,8 @@ class EventBus:
             if not include(event):
                 continue
 
-            if isinstance(event_type, type):
-                return cast(T_QueryEvent, event)
+            # if isinstance(event_type, type):
+            #     return cast(event_type, event)
             return event
 
         return None
