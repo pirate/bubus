@@ -25,13 +25,8 @@ from typing import Any
 import pytest
 from pydantic import Field
 
-from bubus import BaseEvent, EventBus
-from bubus.middlewares import (
-    EventBusMiddleware,
-    LoggerEventBusMiddleware,
-    SQLiteEventBusMiddleware,
-    WALEventBusMiddleware,
-)
+from bubus import BaseEvent, EventBus, SQLiteHistoryMirrorMiddleware
+from bubus.middlewares import EventBusMiddleware, LoggerEventBusMiddleware, WALEventBusMiddleware
 
 
 class CreateAgentTaskEvent(BaseEvent):
@@ -168,6 +163,31 @@ class TestEventEnqueueing:
 
         assert 'no event loop is running' in str(e.value)
         assert len(bus.event_history) == 0
+
+    async def test_unbounded_history_disables_capacity_limit(self):
+        """When max_history_size=None, dispatch should not enforce the 100-event cap."""
+        bus = EventBus(name='NoLimitBus', max_history_size=None)
+
+        processed = 0
+
+        async def slow_handler(event: BaseEvent) -> None:
+            nonlocal processed
+            await asyncio.sleep(0.01)
+            processed += 1
+
+        bus.on('SlowEvent', slow_handler)
+
+        events: list[BaseEvent] = []
+
+        try:
+            for _ in range(150):
+                events.append(bus.dispatch(BaseEvent(event_type='SlowEvent')))
+
+            await asyncio.gather(*events)
+            await bus.wait_until_idle()
+            assert processed == 150
+        finally:
+            await bus.stop(clear=True)
 
 
 class TestHandlerRegistration:
@@ -342,6 +362,56 @@ class TestHandlerRegistration:
         # Verify class and static method results
         assert 'Handled by EventProcessor' in results_list
         assert 'Handled by static method' in results_list
+
+
+class TestEventForwarding:
+    """Tests for event forwarding between buses."""
+
+    @pytest.mark.asyncio
+    async def test_forwarding_loop_prevention(self):
+        bus_a = EventBus(name='ForwardBusA')
+        bus_b = EventBus(name='ForwardBusB')
+        bus_c = EventBus(name='ForwardBusC')
+
+        class LoopEvent(BaseEvent[str]):
+            pass
+
+        seen: dict[str, int] = {'A': 0, 'B': 0, 'C': 0}
+
+        async def handler_a(event: LoopEvent) -> str:
+            seen['A'] += 1
+            return 'handled-a'
+
+        async def handler_b(event: LoopEvent) -> str:
+            seen['B'] += 1
+            return 'handled-b'
+
+        async def handler_c(event: LoopEvent) -> str:
+            seen['C'] += 1
+            return 'handled-c'
+
+        bus_a.on(LoopEvent, handler_a)
+        bus_b.on(LoopEvent, handler_b)
+        bus_c.on(LoopEvent, handler_c)
+
+        # Create a forwarding cycle A -> B -> C -> A, which should be broken automatically.
+        bus_a.on('*', bus_b.dispatch)
+        bus_b.on('*', bus_c.dispatch)
+        bus_c.on('*', bus_a.dispatch)
+
+        try:
+            event = await bus_a.dispatch(LoopEvent())
+
+            await bus_a.wait_until_idle()
+            await bus_b.wait_until_idle()
+            await bus_c.wait_until_idle()
+
+            assert seen == {'A': 1, 'B': 1, 'C': 1}
+            assert event.event_path == ['ForwardBusA', 'ForwardBusB', 'ForwardBusC']
+        finally:
+            await bus_a.stop(clear=True)
+            await bus_b.stop(clear=True)
+            await bus_c.stop(clear=True)
 
 
 class TestFIFOOrdering:
@@ -806,10 +876,12 @@ class TestHandlerMiddleware:
             def __init__(self, call_log: list[tuple[str, str]]):
                 self.call_log = call_log
 
-            async def before_handler(self, eventbus: EventBus, event: BaseEvent, event_result):
+            async def pre_event_handler_started(self, eventbus: EventBus, event: BaseEvent, event_result):
                 self.call_log.append(('before', event_result.status))
 
-            async def after_handler(self, eventbus: EventBus, event: BaseEvent, event_result):
+            async def post_event_handler_completed(
+                self, eventbus: EventBus, event: BaseEvent, event_result
+            ):
                 self.call_log.append(('after', event_result.status))
 
         bus = EventBus(middlewares=[TrackingMiddleware(calls)])
@@ -834,10 +906,10 @@ class TestHandlerMiddleware:
             def __init__(self, log: list[tuple[str, str]]):
                 self.log = log
 
-            async def before_handler(self, eventbus: EventBus, event: BaseEvent, event_result):
+            async def pre_event_handler_started(self, eventbus: EventBus, event: BaseEvent, event_result):
                 self.log.append(('before', event_result.status))
 
-            async def on_handler_error(
+            async def post_event_handler_failed(
                 self,
                 eventbus: EventBus,
                 event: BaseEvent,
@@ -864,10 +936,10 @@ class TestHandlerMiddleware:
             await bus.stop()
 
 
-class TestSQLiteMiddleware:
-    async def test_sqlite_middleware_persists_events_and_results(self, tmp_path):
+class TestSQLiteHistoryMirror:
+    async def test_sqlite_history_persists_events_and_results(self, tmp_path):
         db_path = tmp_path / 'events.sqlite'
-        middleware = SQLiteEventBusMiddleware(db_path)
+        middleware = SQLiteHistoryMirrorMiddleware(db_path)
         bus = EventBus(middlewares=[middleware])
 
         async def handler(event: BaseEvent) -> str:
@@ -880,19 +952,21 @@ class TestSQLiteMiddleware:
             await bus.wait_until_idle()
 
             conn = sqlite3.connect(db_path)
-            events = conn.execute('SELECT event_id, event_type, event_status, event_json FROM events_log').fetchall()
-            assert len(events) == 1
-            assert events[0][1] == 'UserActionEvent'
-            assert events[0][2] == 'completed'
+            events = conn.execute(
+                'SELECT phase, event_status FROM events_log ORDER BY id'
+            ).fetchall()
+            assert [phase for phase, _ in events] == ['pending', 'started', 'completed']
+            assert [status for _, status in events] == ['pending', 'started', 'completed']
 
             result_rows = conn.execute(
-                'SELECT status, result_repr, error_repr FROM event_results_log ORDER BY id'
+                'SELECT phase, status, result_repr, error_repr FROM event_results_log ORDER BY id'
             ).fetchall()
             conn.close()
 
-            assert [status for status, *_ in result_rows] == ['started', 'completed']
-            assert result_rows[-1][1] == "'ok'"
-            assert result_rows[-1][2] is None
+            assert [phase for phase, *_ in result_rows] == ['pending', 'started', 'completed']
+            assert [status for _, status, *_ in result_rows] == ['pending', 'started', 'completed']
+            assert result_rows[-1][2] == "'ok'"
+            assert result_rows[-1][3] is None
         finally:
             await bus.stop()
 
@@ -935,9 +1009,10 @@ class TestLoggerMiddleware:
             assert 'stdout' not in captured.err
         finally:
             await bus.stop()
-    async def test_sqlite_middleware_records_errors(self, tmp_path):
+
+    async def test_sqlite_history_records_errors(self, tmp_path):
         db_path = tmp_path / 'events.sqlite'
-        middleware = SQLiteEventBusMiddleware(db_path)
+        middleware = SQLiteHistoryMirrorMiddleware(db_path)
         bus = EventBus(middlewares=[middleware])
 
         async def failing_handler(event: BaseEvent) -> None:
@@ -951,16 +1026,19 @@ class TestLoggerMiddleware:
 
             conn = sqlite3.connect(db_path)
             result_rows = conn.execute(
-                'SELECT status, error_repr FROM event_results_log ORDER BY id'
+                'SELECT phase, status, error_repr FROM event_results_log ORDER BY id'
             ).fetchall()
-            events = conn.execute('SELECT event_status FROM events_log').fetchall()
+            events = conn.execute('SELECT phase, event_status FROM events_log ORDER BY id').fetchall()
             conn.close()
 
-            assert [status for status, _ in result_rows] == ['started', 'error']
-            assert 'RuntimeError' in result_rows[-1][1]
-            assert events[0][0] == 'error'
+            assert [phase for phase, *_ in result_rows] == ['pending', 'started', 'error']
+            assert [status for _, status, *_ in result_rows] == ['pending', 'started', 'error']
+            assert 'RuntimeError' in result_rows[-1][2]
+            assert [phase for phase, _ in events] == ['pending', 'started', 'error']
+            assert [status for _, status in events] == ['pending', 'started', 'error']
         finally:
             await bus.stop()
+
 
 class TestEventBusHierarchy:
     """Test hierarchical EventBus subscription patterns"""
@@ -1279,11 +1357,19 @@ class TestExpectMethod:
         # Wait for expect
         received = await expect_task
 
-        # At this point, the slow handler should have run
-        # but we receive the event as soon as it matches
         assert received.event_type == 'SlowEvent'
-        # The event might not be fully completed yet since expect
-        # triggers as soon as the event is processed by its handler
+        assert processing_complete is False
+
+        # Slow handler should still be running (or pending) when expect() resolves
+        slow_result = next(
+            (res for res in received.event_results.values() if res.handler_name.endswith('slow_handler')),
+            None,
+        )
+        assert slow_result is not None
+        assert slow_result.status != 'completed'
+
+        await eventbus.wait_until_idle()
+        assert processing_complete is True
 
     async def test_expect_with_complex_predicate(self, eventbus):
         """Test expect with complex predicate logic"""
@@ -1511,6 +1597,25 @@ class TestEventResults:
         # Non-dict results should be skipped, not raise error
         merged_bad = await event_bad.event_results_flat_dict()
         assert merged_bad == {}  # Empty dict since no dict results
+
+    async def test_flat_dict_conflict_raises(self, eventbus):
+        """event_results_flat_dict() raises by default when handlers conflict."""
+
+        async def handler_one(event):
+            return {'shared': 1, 'unique1': 'a'}
+
+        async def handler_two(event):
+            return {'shared': 2, 'unique2': 'b'}
+
+        eventbus.on('ConflictEvent', handler_one)
+        eventbus.on('ConflictEvent', handler_two)
+
+        event = await eventbus.dispatch(BaseEvent(event_type='ConflictEvent'))
+
+        with pytest.raises(ValueError) as exc_info:
+            await event.event_results_flat_dict()
+
+        assert 'overwrite values from previous handlers' in str(exc_info.value)
 
     async def test_flat_list(self, eventbus):
         """Test event_results_flat_list() concatenation"""

@@ -104,9 +104,9 @@ class SomeService:
         return 'this works too'
 
 # All usage patterns behave the same:
-bus.on(SomeEvent, SomeClass().handlers_can_be_methods)
-bus.on(SomeEvent, SomeClass.handler_can_be_classmethods)
-bus.on(SomeEvent, SomeClass.handlers_can_be_staticmethods)
+bus.on(SomeEvent, SomeService().handlers_can_be_methods)
+bus.on(SomeEvent, SomeService.handler_can_be_classmethods)
+bus.on(SomeEvent, SomeService.handlers_can_be_staticmethods)
 ```
 
 <br/>
@@ -181,6 +181,7 @@ bus.on(GetConfigEvent, load_user_config)
 bus.on(GetConfigEvent, load_system_config)
 
 # Get a merger of all dict results
+# (conflicting keys raise ValueError unless raise_if_conflicts=False)
 event = await bus.dispatch(GetConfigEvent())
 config = await event.event_results_flat_dict(raise_if_conflicts=False)
 # {'debug': False, 'port': 8080, 'timeout': 30}
@@ -479,15 +480,14 @@ Persist events automatically to a `jsonl` file for future replay and debugging:
 ```python
 from pathlib import Path
 
-from bubus import EventBus
-from bubus.event_history import SQLiteEventHistory
+from bubus import EventBus, SQLiteHistoryMirrorMiddleware
 from bubus.middlewares import LoggerEventBusMiddleware, WALEventBusMiddleware
 
 # Enable WAL event log persistence (optional)
 bus = EventBus(
     name='MyBus',
-    event_history=SQLiteEventHistory('./events.sqlite'),
     middlewares=[
+        SQLiteHistoryMirrorMiddleware('./events.sqlite'),
         WALEventBusMiddleware('./events.jsonl'),
         LoggerEventBusMiddleware('./events.log'),
     ],
@@ -540,24 +540,24 @@ Handler middlewares subclass `EventBusMiddleware` and override whichever lifecyc
 from bubus.middlewares import EventBusMiddleware
 
 class AnalyticsMiddleware(EventBusMiddleware):
-    async def before_handler(self, eventbus, event, event_result):
+    async def process_handler_start(self, eventbus, event, event_result):
         await analytics_bus.dispatch(HandlerStartedAnalyticsEvent(event_id=event_result.event_id))
 
-    async def after_handler(self, eventbus, event, event_result):
+    async def process_handler_end(self, eventbus, event, event_result):
         await analytics_bus.dispatch(HandlerCompletedAnalyticsEvent(event_id=event_result.event_id))
 
-    async def on_handler_error(self, eventbus, event, event_result, error):
+    async def process_handler_exception(self, eventbus, event, event_result, error):
         await analytics_bus.dispatch(HandlerCompletedAnalyticsEvent(event_id=event_result.event_id, error=error))
 ```
 
 Middlewares can observe or mutate the `EventResult` at each step, dispatch additional events, or trigger other side effects (metrics, retries, auth checks, etc.).
 
-Pair that with the built-in `SQLiteEventHistory` to mirror every event and handler transition into append-only `events_log` and `event_results_log` tables, making it easy to inspect or audit the bus state:
+Pair that with the built-in `SQLiteHistoryMirrorMiddleware` to mirror every event and handler transition into append-only `events_log` and `event_results_log` tables, making it easy to inspect or audit the bus state:
 
 ```python
-from bubus.event_history import SQLiteEventHistory
+from bubus import EventBus, SQLiteHistoryMirrorMiddleware
 
-bus = EventBus(event_history=SQLiteEventHistory('./events.sqlite'))
+bus = EventBus(middlewares=[SQLiteHistoryMirrorMiddleware('./events.sqlite')])
 ```
 - `max_history_size`: Maximum number of events to keep in history (default: 50, None = unlimited)
 
@@ -647,7 +647,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     # Framework-managed fields
     event_type: str              # Defaults to class name
     event_id: str                # Unique UUID7 identifier, auto-generated if not provided
-    event_timeout: float = 60.0  # Maximum execution in seconds for each handler
+    event_timeout: float = 300.0 # Maximum execution in seconds for each handler
     event_schema: str            # Module.Class@version (auto-set based on class & LIBRARY_VERSION env var)
     event_parent_id: str         # Parent event ID (auto-set)
     event_path: list[str]        # List of bus names traversed (auto-set)
@@ -667,7 +667,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 
 #### `BaseEvent` Properties
 
-- `event_status`: `Literal['pending', 'started', 'complete']` Event status
+- `event_status`: `Literal['pending', 'started', 'completed']` Event status
 - `event_started_at`: `datetime` When first handler started processing
 - `event_completed_at`: `datetime` When all handlers completed processing
 - `event_children`: `list[BaseEvent]` Get any child events emitted during handling of this event
@@ -851,7 +851,7 @@ class EventResult(BaseModel):
     
     status: str               # 'pending', 'started', 'completed', 'error'
     result: Any               # Handler return value
-    error: str | None         # Error message if failed
+    error: BaseException | None  # Captured exception if the handler failed
     
     started_at: datetime      # When handler started
     completed_at: datetime    # When handler completed

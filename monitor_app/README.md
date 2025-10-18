@@ -1,6 +1,6 @@
 # bubus Monitor App
 
-Minimal FastAPI application that reads the `events_log` and `event_results_log` tables produced by `SQLiteEventHistory` and exposes them over HTTP/WebSocket for live monitoring.
+Minimal FastAPI application that reads the `events_log` and `event_results_log` tables produced by the `SQLiteHistoryMirrorMiddleware` and exposes them over HTTP/WebSocket for live monitoring.
 
 Install dependencies (once):
 

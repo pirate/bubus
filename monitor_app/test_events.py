@@ -8,8 +8,7 @@ import random
 import string
 from typing import Sequence
 
-from bubus import BaseEvent, EventBus
-from bubus.event_history import SQLiteEventHistory
+from bubus import BaseEvent, EventBus, SQLiteHistoryMirrorMiddleware
 
 from .config import resolve_db_path
 
@@ -54,8 +53,8 @@ def _random_text(length: int = 8) -> str:
 async def run_generator(args: argparse.Namespace) -> None:
     db_path = resolve_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    history = SQLiteEventHistory(db_path)
-    bus = EventBus(name='MonitorGenerator', event_history=history, parallel_handlers=True)
+    middleware = SQLiteHistoryMirrorMiddleware(db_path)
+    bus = EventBus(name='MonitorGenerator', middlewares=[middleware], parallel_handlers=True)
 
     categories: Sequence[str] = args.categories or ['default']
 

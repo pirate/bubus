@@ -1,9 +1,11 @@
-import asyncio
 from uuid import uuid4
 
 import pytest
 
-from bubus.models import BaseEvent, EventResult, get_handler_id
+from typing import Any, cast
+
+from bubus.models import BaseEvent, EventHandler, EventResult, get_handler_id
+from bubus.service import EventBus
 
 
 class _StubEvent:
@@ -41,17 +43,19 @@ async def test_event_result_execute_without_base_event() -> None:
     async def handler(event: _StubEvent) -> str:
         return 'ok'
 
+    test_bus = EventBus(name='StandaloneTest1')
     result_value = await event_result.execute(
-        stub_event,
-        handler,
-        eventbus='StandaloneBus',
+        cast(BaseEvent[Any], stub_event),
+        cast(EventHandler, handler),
+        eventbus=test_bus,
         timeout=stub_event.event_timeout,
     )
 
     assert result_value == 'ok'
     assert event_result.status == 'completed'
     assert event_result.result == 'ok'
-    assert stub_event._cancelled_due_to_error is None
+    assert stub_event.__dict__.get('_cancelled_due_to_error') is None
+    await test_bus.stop()
 
 
 class StandaloneEvent(BaseEvent[str]):
@@ -67,14 +71,15 @@ async def test_event_and_result_without_eventbus() -> None:
     def handler(evt: StandaloneEvent) -> str:
         return evt.data.upper()
 
-    handler_id = get_handler_id(handler, None)
-    pending_results = event.event_create_pending_results({handler_id: handler})
+    handler_id = get_handler_id(cast(EventHandler, handler), None)
+    pending_results = event.event_create_pending_results({handler_id: cast(EventHandler, handler)})
     event_result = pending_results[handler_id]
 
+    test_bus = EventBus(name='StandaloneTest2')
     value = await event_result.execute(
         event,
-        handler,
-        eventbus='StandaloneBus',
+        cast(EventHandler, handler),
+        eventbus=test_bus,
         timeout=event.event_timeout,
     )
 
@@ -84,3 +89,4 @@ async def test_event_and_result_without_eventbus() -> None:
 
     event.event_mark_complete_if_all_handlers_completed()
     assert event.event_completed_at is not None
+    await test_bus.stop()
