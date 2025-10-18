@@ -14,6 +14,6 @@ def resolve_db_path() -> Path:
     """
     db_path = Path(os.getenv('EVENT_HISTORY_DB', DEFAULT_DB_PATH))
     if not db_path.is_absolute():
-        # Resolve relative to repository root (parent directory of monitor_app)
+        # Resolve relative to repository root (parent directory of ui)
         db_path = Path(__file__).resolve().parent.parent / db_path
     return db_path

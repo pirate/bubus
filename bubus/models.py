@@ -884,6 +884,11 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
     #   and it would significantly reduce runtime flexibility, e.g. you couldn't define and dispatch arbitrary server-provided event types at runtime
     event_children: list['BaseEvent[Any]'] = Field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
 
+    @field_serializer('result', when_used='json')
+    def _serialize_result(self, value: T_EventResultType | BaseEvent[Any] | None) -> Any:
+        """Preserve handler return values when serializing without extra validation."""
+        return value
+
     @property
     def handler_completed_signal(self) -> asyncio.Event | None:
         """Lazily create asyncio.Event when accessed"""

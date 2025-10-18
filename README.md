@@ -444,7 +444,7 @@ email_list = await event_bus.dispatch(FetchInboxEvent(account_id='124', ...)).ev
 EventBus includes automatic memory management to prevent unbounded growth in long-running applications:
 
 ```python
-# Create a bus with memory limits (default: 50 events)
+# Create a bus with memory limits (default: 100 events)
 bus = EventBus(max_history_size=100)  # Keep max 100 events in history
 
 # Or disable memory limits for unlimited history
