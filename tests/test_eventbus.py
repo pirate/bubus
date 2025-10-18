@@ -1495,6 +1495,7 @@ class TestDebouncePatterns:
 
         # Later await the coroutine
         result = await expect_coroutine
+        assert result is not None
         assert result.event_type == 'SyncEvent'
 
         await bus.stop()

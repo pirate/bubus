@@ -192,6 +192,7 @@ async def test_expect_type_inference():
 
     # Use expect with the event class - should return SpecificEvent type
     expected_event = await bus.expect(SpecificEvent, timeout=1.0)
+    assert expected_event is not None
 
     # Type checking - this should work without cast
     assert_type(expected_event, SpecificEvent)  # Verify type is SpecificEvent, not BaseEvent[Any]
@@ -214,6 +215,7 @@ async def test_expect_type_inference():
         include=lambda e: e.request_id == 'correct',  # type: ignore
         timeout=1.0,
     )
+    assert filtered_event is not None
 
     assert_type(filtered_event, SpecificEvent)  # Should still be SpecificEvent
     assert type(filtered_event) is SpecificEvent
@@ -226,6 +228,7 @@ async def test_expect_type_inference():
 
     dispatch_task3 = asyncio.create_task(dispatch_string_event())
     string_event = await bus.expect('StringEvent', timeout=1.0)
+    assert string_event is not None
 
     assert_type(string_event, BaseEvent[Any])  # Should be BaseEvent[Any]
     assert string_event.event_type == 'StringEvent'
