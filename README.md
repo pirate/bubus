@@ -1065,8 +1065,7 @@ uv run pytest tests/test_eventbus.py
 
 - https://www.cosmicpython.com/book/chapter_08_events_and_message_bus.html#message_bus_diagram ⭐️
 - https://developer.mozilla.org/en-US/docs/Web/API/EventTarget ⭐️
-- https://github.com/sindresorhus/emittery ⭐️ (equivalent for JS)
-https://github.com/EventEmitter2/EventEmitter2
+- https://github.com/sindresorhus/emittery ⭐️ (equivalent for JS), https://github.com/EventEmitter2/EventEmitter2, https://github.com/vitaly-t/sub-events
 - https://github.com/pytest-dev/pluggy ⭐️
 - https://github.com/teamhide/fastapi-event ⭐️
 - https://github.com/ethereum/lahja ⭐️
