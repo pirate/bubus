@@ -439,6 +439,69 @@ email_list = await event_bus.dispatch(FetchInboxEvent(account_id='124', ...)).ev
 
 <br/>
 
+### 🧵 ContextVar Propagation
+
+ContextVars set before `dispatch()` are automatically propagated to event handlers. This is essential for request-scoped context like request IDs, user sessions, or tracing spans:
+
+```python
+from contextvars import ContextVar
+
+# Define your context variables
+request_id: ContextVar[str] = ContextVar('request_id', default='<unset>')
+user_id: ContextVar[str] = ContextVar('user_id', default='<unset>')
+
+async def handler(event: MyEvent) -> str:
+    # Handler sees the context values that were set before dispatch()
+    print(f"Request: {request_id.get()}, User: {user_id.get()}")
+    return "done"
+
+bus.on(MyEvent, handler)
+
+# Set context before dispatch (e.g., in FastAPI middleware)
+request_id.set('req-12345')
+user_id.set('user-abc')
+
+# Handler will see request_id='req-12345' and user_id='user-abc'
+await bus.dispatch(MyEvent())
+```
+
+**Context propagates through nested handlers:**
+
+```python
+async def parent_handler(event: ParentEvent) -> str:
+    # Context is captured at dispatch time
+    print(f"Parent sees: {request_id.get()}")  # 'req-12345'
+
+    # Child events inherit the same context
+    await bus.dispatch(ChildEvent())
+    return "parent_done"
+
+async def child_handler(event: ChildEvent) -> str:
+    # Child also sees the original dispatch context
+    print(f"Child sees: {request_id.get()}")  # 'req-12345'
+    return "child_done"
+```
+
+**Context isolation between dispatches:**
+
+Each dispatch captures its own context snapshot. Concurrent dispatches with different context values are properly isolated:
+
+```python
+request_id.set('req-A')
+event_a = bus.dispatch(MyEvent())  # Handler A sees 'req-A'
+
+request_id.set('req-B')
+event_b = bus.dispatch(MyEvent())  # Handler B sees 'req-B'
+
+await event_a  # Still sees 'req-A'
+await event_b  # Still sees 'req-B'
+```
+
+> [!NOTE]
+> Context is captured at `dispatch()` time, not when the handler executes. This ensures handlers see the context from the call site, even if the event is processed later from a queue.
+
+<br/>
+
 ### 🧹 Memory Management
 
 EventBus includes automatic memory management to prevent unbounded growth in long-running applications:
