@@ -685,6 +685,11 @@ class EventBus:
             if current_event is not None:
                 event.event_parent_id = current_event.event_id
 
+        # Capture dispatch-time context for propagation to handlers (GitHub issue #20)
+        # This ensures ContextVars set before dispatch() are accessible in handlers
+        if event._event_dispatch_context is None:
+            event._event_dispatch_context = contextvars.copy_context()
+
         # Track child events - if we're inside a handler, add this event to the handler's event_children list
         # Only track if this is a NEW event (not forwarding an existing event)
         current_handler_id = _current_handler_id_context.get()

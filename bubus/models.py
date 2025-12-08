@@ -1,4 +1,5 @@
 import asyncio
+import contextvars
 import inspect
 import logging
 import os
@@ -255,6 +256,10 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 
     # Completion signal
     _event_completed_signal: asyncio.Event | None = PrivateAttr(default=None)
+
+    # Dispatch-time context for ContextVar propagation to handlers
+    # Captured when dispatch() is called, used when executing handlers via ctx.run()
+    _event_dispatch_context: contextvars.Context | None = PrivateAttr(default=None)
 
     def __hash__(self) -> int:
         """Make events hashable using their unique event_id"""
@@ -1055,7 +1060,10 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
         monitor_task: asyncio.Task[None] | None = None
         handler_task: asyncio.Task[Any] | None = None
 
-        handler_context_tokens = _enter_handler_context_callable(event, self.handler_id)
+        # Use dispatch-time context if available (GitHub issue #20)
+        # This ensures ContextVars set before dispatch() are accessible in handlers
+        # Use getattr to handle stub events that may not have this attribute
+        dispatch_context = getattr(event, '_event_dispatch_context', None)
 
         async def deadlock_monitor() -> None:
             await asyncio.sleep(15.0)
@@ -1069,12 +1077,54 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
             deadlock_monitor(), name=f'{eventbus}.deadlock_monitor({event}, {self.handler_name}#{self.handler_id[-4:]})'
         )
 
+        # For handlers running in dispatch context, we need to set up internal context vars
+        # INSIDE that context. Create a wrapper that does setup -> handler -> cleanup.
+        # This includes holds_global_lock which is set by ReentrantLock in the parent context.
+        async def async_handler_with_context() -> Any:
+            """Wrapper that sets up internal context before calling async handler."""
+            from bubus.service import holds_global_lock
+            # Set holds_global_lock since we're running inside a handler that holds the lock
+            # (ReentrantLock set this in the parent context, but dispatch_context is from before that)
+            holds_global_lock.set(True)
+            tokens = _enter_handler_context_callable(event, self.handler_id)
+            try:
+                return await handler(event)  # type: ignore
+            finally:
+                _exit_handler_context_callable(tokens)
+
+        def sync_handler_with_context() -> Any:
+            """Wrapper that sets up internal context before calling sync handler."""
+            from bubus.service import holds_global_lock
+            holds_global_lock.set(True)
+            tokens = _enter_handler_context_callable(event, self.handler_id)
+            try:
+                return handler(event)
+            finally:
+                _exit_handler_context_callable(tokens)
+
+        # If no dispatch context, set up context vars the normal way (outside handler)
+        if dispatch_context is None:
+            handler_context_tokens = _enter_handler_context_callable(event, self.handler_id)
+        else:
+            handler_context_tokens = None  # Will be set inside the wrapper
+
         try:
             if inspect.iscoroutinefunction(handler):
-                handler_task = asyncio.create_task(handler(event))  # type: ignore
+                if dispatch_context is not None:
+                    # Run wrapper (which sets internal context) inside dispatch context
+                    handler_task = asyncio.create_task(
+                        async_handler_with_context(),
+                        context=dispatch_context,
+                    )
+                else:
+                    handler_task = asyncio.create_task(handler(event))  # type: ignore
                 handler_return_value: Any = await asyncio.wait_for(handler_task, timeout=self.timeout)
             elif inspect.isfunction(handler) or inspect.ismethod(handler):
-                handler_return_value = handler(event)
+                if dispatch_context is not None:
+                    # Run sync wrapper inside dispatch context
+                    handler_return_value = dispatch_context.run(sync_handler_with_context)
+                else:
+                    handler_return_value = handler(event)
                 if isinstance(handler_return_value, BaseEvent):
                     logger.debug(
                         f'Handler {self.handler_name} returned BaseEvent, not awaiting to avoid circular dependency'
@@ -1144,7 +1194,9 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
                 except Exception:
                     pass
 
-            _exit_handler_context_callable(handler_context_tokens)
+            # Only exit context if it was set outside the wrapper (i.e., no dispatch context)
+            if handler_context_tokens is not None:
+                _exit_handler_context_callable(handler_context_tokens)
 
     def log_tree(
         self,
