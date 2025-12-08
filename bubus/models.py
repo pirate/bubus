@@ -274,80 +274,97 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         # AuthBus≫DataBus▶ AuthLoginEvent#ab12 ⏳
         return f'{"≫".join(self.event_path[1:] or "?")}▶ {self.event_type}#{self.event_id[-4:]} {icon}'
 
-    def __await__(self) -> Generator[Self, Any, Any]:
-        """Wait for event to complete and return self"""
+    def _remove_self_from_queue(self, bus: 'EventBus') -> bool:
+        """Remove this event from the bus's queue if present. Returns True if removed."""
+        if bus and bus.event_queue and hasattr(bus.event_queue, '_queue'):
+            queue = bus.event_queue._queue
+            if self in queue:
+                queue.remove(self)
+                return True
+        return False
 
-        # long descriptive name here really helps make traceback easier to follow
-        async def wait_for_handlers_to_complete_then_return_event():
-            assert self.event_completed_signal is not None
+    async def _process_self_on_all_buses(self) -> None:
+        """
+        Process this specific event on all buses where it's queued.
 
-            # If we're inside a handler and this event isn't complete yet,
-            # we need to process it immediately to avoid deadlock
-            from bubus.service import EventBus, holds_global_lock, inside_handler_context
+        This handles the case where an event is forwarded to multiple buses -
+        we need to process it on each bus, but we only process THIS event,
+        not other events in the queues (to avoid overshoot).
 
-            if not self.event_completed_signal.is_set() and inside_handler_context.get() and holds_global_lock.get():
-                # We're inside a handler and hold the global lock
-                # Process events until this one completes
+        The loop continues until the event's completion signal is set, which
+        happens after all handlers on all buses have completed.
+        """
+        from bubus.service import EventBus
 
-                # logger.debug(f'__await__ for {self} - inside handler context, processing child events')
+        max_iterations = 1000  # Prevent infinite loops
+        iterations = 0
 
-                # Keep processing events from all buses until this event is complete
-                max_iterations = 1000  # Prevent infinite loops
-                iterations = 0
+        try:
+            while not self.event_completed_signal.is_set() and iterations < max_iterations:
+                iterations += 1
+                processed_any = False
 
-                try:
-                    while not self.event_completed_signal.is_set() and iterations < max_iterations:
-                        iterations += 1
-                        processed_any = False
+                # Look for this specific event in all bus queues and process it
+                for bus in list(EventBus.all_instances):
+                    if not bus or not bus.event_queue:
+                        continue
 
-                        # Process any queued events on all buses
-                        # Create a list copy to avoid "Set changed size during iteration" error
-                        for bus in list(EventBus.all_instances):
-                            if not bus or not bus.event_queue:
-                                continue
+                    # Check if THIS event is in this bus's queue
+                    if self._remove_self_from_queue(bus):
+                        # Process only this event on this bus
+                        await bus.process_event(self)
+                        bus.event_queue.task_done()
+                        processed_any = True
 
-                            # Process one event from this bus if available
-                            try:
-                                if bus.event_queue.qsize() > 0:
-                                    event = bus.event_queue.get_nowait()
-                                    await bus.process_event(event)
-                                    bus.event_queue.task_done()
-                                    processed_any = True
-                                    # Check if the event we're waiting for is now complete
-                                    if self.event_completed_signal.is_set():
-                                        break
-                            except asyncio.QueueEmpty:
-                                pass
-
-                        # Break out of the loop if event completed after processing
+                        # Check if we're done after processing
                         if self.event_completed_signal.is_set():
                             break
 
-                        if not processed_any:
-                            # No events to process, yield control and check for cancellation
-                            try:
-                                await asyncio.sleep(0)
-                            except asyncio.CancelledError:
-                                raise
-                except asyncio.CancelledError:
-                    # Handler was cancelled due to timeout, exit cleanly
-                    logger.debug(f'Polling loop cancelled for {self}')
-                    raise
+                if self.event_completed_signal.is_set():
+                    break
 
-                if iterations >= max_iterations:
-                    # logger.error(f'Max iterations reached while waiting for {self}')
-                    pass
+                if not processed_any:
+                    # Event not in any queue, yield control and wait
+                    await asyncio.sleep(0)
+
+        except asyncio.CancelledError:
+            logger.debug(f'Polling loop cancelled for {self}')
+            raise
+
+    async def _wait_for_completion_inside_handler(self) -> None:
+        """
+        Wait for this event to complete when called from inside a handler.
+
+        Processes this specific event on all buses where it appears (handling
+        the forwarding case), but doesn't process other events (avoiding overshoot).
+        """
+        await self._process_self_on_all_buses()
+
+    async def _wait_for_completion_outside_handler(self) -> None:
+        """
+        Wait for this event to complete when called from outside a handler.
+
+        Simply waits on the completion signal - the event loop's normal
+        processing will handle the event.
+        """
+        assert self.event_completed_signal is not None
+        await self.event_completed_signal.wait()
+
+    def __await__(self) -> Generator[Self, Any, Any]:
+        """Wait for event to complete and return self"""
+
+        async def wait_for_handlers_to_complete_then_return_event():
+            assert self.event_completed_signal is not None
+            from bubus.service import holds_global_lock, inside_handler_context
+
+            is_inside_handler = inside_handler_context.get() and holds_global_lock.get()
+            is_not_yet_complete = not self.event_completed_signal.is_set()
+
+            if is_not_yet_complete and is_inside_handler:
+                await self._wait_for_completion_inside_handler()
             else:
-                # Not in handler context - wait for the event to complete normally
-                await self.event_completed_signal.wait()
+                await self._wait_for_completion_outside_handler()
 
-            # Check if any handlers had errors and raise the first one
-            # for result in self.event_results.values():
-            #     if result.error:
-            #         raise result.error
-
-            # Return the completed event without raising errors
-            # Errors should only be raised when explicitly requested via event_result() methods
             return self
 
         return wait_for_handlers_to_complete_then_return_event().__await__()
