@@ -754,6 +754,8 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
                 if hasattr(self, 'event_processed_at'):
                     self.event_processed_at = datetime.now(UTC)
                 self.event_completed_signal.set()
+                # Clear dispatch context to avoid memory leaks
+                self._event_dispatch_context = None
                 return
 
             # Check if all handler results are done
@@ -777,6 +779,8 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
                 self.event_processed_at = datetime.now(UTC)
             # logger.debug(f'Event {self} marking complete - all handlers and children done')
             self.event_completed_signal.set()
+            # Clear dispatch context to avoid memory leaks (it holds references to ContextVars)
+            self._event_dispatch_context = None
 
     def event_are_all_children_complete(self, _visited: set[str] | None = None) -> bool:
         """Recursively check if all child events and their descendants are complete"""
