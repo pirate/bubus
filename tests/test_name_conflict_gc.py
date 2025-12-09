@@ -19,94 +19,110 @@ class TestNameConflictGC:
     def test_name_conflict_with_live_reference(self):
         """Test that name conflict generates a warning and auto-generates a unique name"""
         # Create an EventBus with a specific name
-        bus1 = EventBus(name='TestBus')
+        bus1 = EventBus(name='GCTestConflict')
 
         # Try to create another with the same name - should warn and auto-generate unique name
-        with pytest.warns(UserWarning, match='EventBus with name "TestBus" already exists'):
-            bus2 = EventBus(name='TestBus')
+        with pytest.warns(UserWarning, match='EventBus with name "GCTestConflict" already exists'):
+            bus2 = EventBus(name='GCTestConflict')
 
         # The second bus should have a unique name
-        assert bus2.name.startswith('TestBus_')
-        assert bus2.name != 'TestBus'
-        assert len(bus2.name) == len('TestBus_') + 8  # Original name + underscore + 8 char suffix
+        assert bus2.name.startswith('GCTestConflict_')
+        assert bus2.name != 'GCTestConflict'
+        assert len(bus2.name) == len('GCTestConflict_') + 8  # Original name + underscore + 8 char suffix
 
     def test_name_no_conflict_after_deletion(self):
-        """Test that name conflict is NOT raised after the existing bus is deleted"""
+        """Test that name conflict is NOT raised after the existing bus is deleted and GC runs"""
+        import gc
+
         # Create an EventBus with a specific name
-        bus1 = EventBus(name='TestBus')
+        bus1 = EventBus(name='GCTestBus1')
 
-        # Delete the reference
+        # Delete the reference and force GC
         del bus1
+        gc.collect()  # Force garbage collection to release the WeakSet reference
 
-        # Creating another with the same name should work since the first one has no references
-        bus2 = EventBus(name='TestBus')
-        assert bus2.name == 'TestBus'
+        # Creating another with the same name should work since the first one was collected
+        bus2 = EventBus(name='GCTestBus1')
+        assert bus2.name == 'GCTestBus1'
 
     def test_name_no_conflict_with_no_reference(self):
         """Test that name conflict is NOT raised when the existing bus was never assigned"""
+        import gc
+
         # Create an EventBus with a specific name but don't keep a reference
-        EventBus(name='TestBus')  # No assignment, will be garbage collected
+        EventBus(name='GCTestBus2')  # No assignment, will be garbage collected
+        gc.collect()  # Force garbage collection
 
         # Creating another with the same name should work since the first one is gone
-        bus2 = EventBus(name='TestBus')
-        assert bus2.name == 'TestBus'
+        bus2 = EventBus(name='GCTestBus2')
+        assert bus2.name == 'GCTestBus2'
 
     def test_name_conflict_with_weak_reference_only(self):
         """Test that name conflict is NOT raised when only weak references exist"""
+        import gc
+
         # Create an EventBus and keep only a weak reference
-        bus1 = EventBus(name='TestBus')
+        bus1 = EventBus(name='GCTestBus3')
         weak_ref = weakref.ref(bus1)
 
         # Verify the weak reference works
         assert weak_ref() is bus1
 
-        # Delete the strong reference
+        # Delete the strong reference and force GC
         del bus1
+        gc.collect()  # Force garbage collection
 
         # At this point, only the weak reference exists (and the WeakSet reference)
         # Creating another with the same name should work
-        bus2 = EventBus(name='TestBus')
-        assert bus2.name == 'TestBus'
+        bus2 = EventBus(name='GCTestBus3')
+        assert bus2.name == 'GCTestBus3'
 
         # The weak reference should now return None
         assert weak_ref() is None
 
     def test_multiple_buses_with_gc(self):
         """Test multiple EventBus instances with some being garbage collected"""
+        import gc
+
         # Create multiple buses, some with strong refs, some without
-        bus1 = EventBus(name='Bus1')
-        EventBus(name='Bus2')  # Will be GC'd
-        bus3 = EventBus(name='Bus3')
-        EventBus(name='Bus4')  # Will be GC'd
+        bus1 = EventBus(name='GCMulti1')
+        EventBus(name='GCMulti2')  # Will be GC'd
+        bus3 = EventBus(name='GCMulti3')
+        EventBus(name='GCMulti4')  # Will be GC'd
+
+        gc.collect()  # Force garbage collection
 
         # Should be able to create new buses with the names of GC'd buses
-        bus2_new = EventBus(name='Bus2')
-        bus4_new = EventBus(name='Bus4')
+        bus2_new = EventBus(name='GCMulti2')
+        bus4_new = EventBus(name='GCMulti4')
 
         # But not with names of buses that still exist - they get auto-generated names
-        with pytest.warns(UserWarning, match='EventBus with name "Bus1" already exists'):
-            bus1_conflict = EventBus(name='Bus1')
-        assert bus1_conflict.name.startswith('Bus1_')
+        with pytest.warns(UserWarning, match='EventBus with name "GCMulti1" already exists'):
+            bus1_conflict = EventBus(name='GCMulti1')
+        assert bus1_conflict.name.startswith('GCMulti1_')
 
-        with pytest.warns(UserWarning, match='EventBus with name "Bus3" already exists'):
-            bus3_conflict = EventBus(name='Bus3')
-        assert bus3_conflict.name.startswith('Bus3_')
+        with pytest.warns(UserWarning, match='EventBus with name "GCMulti3" already exists'):
+            bus3_conflict = EventBus(name='GCMulti3')
+        assert bus3_conflict.name.startswith('GCMulti3_')
 
     @pytest.mark.asyncio
     async def test_name_conflict_after_stop_and_clear(self):
         """Test that clearing an EventBus allows reusing its name"""
-        # Create an EventBus
-        bus1 = EventBus(name='TestBus')
+        import gc
 
-        # Stop and clear it
+        # Create an EventBus
+        bus1 = EventBus(name='GCStopClear')
+
+        # Stop and clear it (this renames the bus to _stopped_* and removes from all_instances)
         await bus1.stop(clear=True)
 
-        # Delete the reference to allow garbage collection
+        # Delete the reference and force GC
         del bus1
+        gc.collect()
 
         # Now we should be able to create a new one with the same name
-        bus2 = EventBus(name='TestBus')
-        assert bus2.name == 'TestBus'
+        bus2 = EventBus(name='GCStopClear')
+        assert bus2.name == 'GCStopClear'
 
     def test_weakset_behavior(self):
         """Test that the WeakSet properly tracks EventBus instances"""
@@ -131,17 +147,19 @@ class TestNameConflictGC:
         # WeakTest2 might still be there until the next iteration
 
     def test_eventbus_removed_from_weakset(self):
-        """Test that our implementation removes dead EventBus from WeakSet during conflict check"""
-        # Create a bus that will be "dead" (no strong references)
-        EventBus(name='DeadBus')
+        """Test that dead EventBus instances are removed from WeakSet after GC"""
+        import gc
 
-        # When we try to create a new bus with the same name, the conflict check
-        # should detect the dead bus and remove it from the WeakSet
-        bus = EventBus(name='DeadBus')
-        assert bus.name == 'DeadBus'
+        # Create a bus that will be "dead" (no strong references)
+        EventBus(name='GCDeadBus')
+        gc.collect()  # Force garbage collection
+
+        # When we try to create a new bus with the same name, it should work
+        bus = EventBus(name='GCDeadBus')
+        assert bus.name == 'GCDeadBus'
 
         # The dead bus should have been removed from all_instances
-        names = [b.name for b in EventBus.all_instances if hasattr(b, 'name') and b.name == 'DeadBus']
+        names = [b.name for b in EventBus.all_instances if hasattr(b, 'name') and b.name == 'GCDeadBus']
         assert len(names) == 1  # Only the new one
 
     def test_concurrent_name_creation(self):

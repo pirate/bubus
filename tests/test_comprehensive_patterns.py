@@ -1,5 +1,7 @@
 """Test comprehensive event patterns including forwarding, async/sync dispatch, and parent-child tracking."""
 
+# pyright: reportUnusedVariable=false
+
 import asyncio
 from typing import Any
 

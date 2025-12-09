@@ -3,6 +3,7 @@ import contextvars
 import inspect
 import logging
 import os
+from collections import deque
 from collections.abc import Awaitable, Callable, Generator
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Generic, Literal, Protocol, Self, TypeAlias, cast, runtime_checkable
@@ -282,7 +283,8 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     def _remove_self_from_queue(self, bus: 'EventBus') -> bool:
         """Remove this event from the bus's queue if present. Returns True if removed."""
         if bus and bus.event_queue and hasattr(bus.event_queue, '_queue'):
-            queue = bus.event_queue._queue
+            # Access internal deque of asyncio.Queue (implementation detail)
+            queue = cast(deque[BaseEvent[Any]], bus.event_queue._queue)  # type: ignore[attr-defined]
             if self in queue:
                 queue.remove(self)
                 return True
@@ -304,8 +306,12 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         max_iterations = 1000  # Prevent infinite loops
         iterations = 0
 
+        # Cache the signal - in async context it will always be created
+        completed_signal = self.event_completed_signal
+        assert completed_signal is not None, 'event_completed_signal should exist in async context'
+
         try:
-            while not self.event_completed_signal.is_set() and iterations < max_iterations:
+            while not completed_signal.is_set() and iterations < max_iterations:
                 iterations += 1
                 processed_any = False
 
@@ -322,10 +328,10 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
                         processed_any = True
 
                         # Check if we're done after processing
-                        if self.event_completed_signal.is_set():
+                        if completed_signal.is_set():
                             break
 
-                if self.event_completed_signal.is_set():
+                if completed_signal.is_set():
                     break
 
                 if not processed_any:
@@ -1102,7 +1108,7 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
             holds_global_lock.set(True)
             tokens = _enter_handler_context_callable(event, self.handler_id)
             try:
-                return handler(event)
+                return handler(event)  # type: ignore[call-arg]  # protocol allows _self param but we dont need it because it's already bound
             finally:
                 _exit_handler_context_callable(tokens)
 

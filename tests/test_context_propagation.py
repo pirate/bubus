@@ -9,6 +9,9 @@ user calls bus.dispatch()), not at PROCESSING time (when the event is pulled
 from the queue and handlers are executed).
 """
 
+# pyright: reportUnusedVariable=false
+# pyright: reportUnusedFunction=false
+
 import asyncio
 from contextvars import ContextVar
 from typing import Any

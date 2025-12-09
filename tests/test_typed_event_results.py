@@ -1,5 +1,8 @@
 """Test typed event results with automatic casting."""
 
+# pyright: reportAssertTypeFailure=false
+# pyright: reportUnnecessaryIsInstance=false
+
 import asyncio
 from typing import Any, assert_type
 

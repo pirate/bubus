@@ -350,23 +350,10 @@ class EventBus:
 
         for existing_bus in list(EventBus.all_instances):  # Make a list copy to avoid modification during iteration
             if existing_bus is not self and existing_bus.name == self.name:
-                # Try to trigger collection of just this object by checking if it's collectable
-                # First, temporarily remove from WeakSet to see if that was the only reference
-                EventBus.all_instances.discard(existing_bus)
-
-                # Check if the object is still reachable by creating a new weak reference
-                # If the object only existed in the WeakSet, it should be unreachable now
-                try:
-                    # Try to access an attribute to see if the object is still valid
-                    _ = existing_bus.name  # This will work if object is still alive
-
-                    # Object is still alive with real references, restore to WeakSet
-                    EventBus.all_instances.add(existing_bus)
-                    conflicting_buses.append(existing_bus)
-                except Exception:
-                    # Object was garbage collected or is invalid (e.g., AttributeError), that's fine
-                    # Don't re-add to WeakSet, let it stay removed
-                    pass
+                # Since stop() renames buses to _stopped_{id}, any bus with a matching
+                # user-specified name is either running or never-started - both should
+                # be considered conflicts. This makes name conflict detection deterministic.
+                conflicting_buses.append(existing_bus)
 
         # If we found conflicting buses, auto-generate a unique suffix
         if conflicting_buses:
@@ -687,8 +674,8 @@ class EventBus:
 
         # Capture dispatch-time context for propagation to handlers (GitHub issue #20)
         # This ensures ContextVars set before dispatch() are accessible in handlers
-        if event._event_dispatch_context is None:
-            event._event_dispatch_context = contextvars.copy_context()
+        if event._event_dispatch_context is None:  # pyright: ignore[reportPrivateUsage]
+            event._event_dispatch_context = contextvars.copy_context()  # pyright: ignore[reportPrivateUsage]
 
         # Track child events - if we're inside a handler, add this event to the handler's event_children list
         # Only track if this is a NEW event (not forwarding an existing event)
@@ -1243,10 +1230,16 @@ class EventBus:
         if self._on_idle:
             self._on_idle.set()
 
+        # Rename the bus to release the name. This ensures stopped buses don't
+        # cause name conflicts with new buses using the same name. This makes
+        # name conflict detection deterministic (not dependent on GC timing).
+        self.name = f'_stopped_{self.id[-8:]}'
+
         # Clear event history and handlers if requested (for memory cleanup)
         if clear:
             self.event_history.clear()
             self.handlers.clear()
+
             # Remove from global instance tracking
             if self in EventBus.all_instances:
                 EventBus.all_instances.discard(self)
