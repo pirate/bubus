@@ -23,7 +23,8 @@
       "WebFetch(domain:github.com)",
       "Bash(timeout 60 .venv/bin/pytest:*)",
       "Bash(timeout 180 .venv/bin/pytest tests/ -v)",
-      "Bash(timeout 180 .venv/bin/pytest:*)"
+      "Bash(timeout 180 .venv/bin/pytest:*)",
+      "Bash(git tag:*)"
     ],
     "deny": []
   }

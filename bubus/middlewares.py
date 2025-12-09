@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Any
 
 from bubus.logging import log_eventbus_tree
-from bubus.models import BaseEvent, EventResult
+from bubus.models import BaseEvent, EventResult, EventStatus
 from bubus.service import EventBus
 from bubus.service import EventBusMiddleware as _EventBusMiddleware
 
@@ -34,16 +34,15 @@ class WALEventBusMiddleware(EventBusMiddleware):
         self.wal_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
 
-    async def post_event_completed(self, eventbus: EventBus, event: BaseEvent[Any]) -> None:
-        if getattr(event, '_wal_written', False):
+    async def on_event_complete(self, eventbus: EventBus, event: BaseEvent[Any]) -> None:
+        if not self._once_per_event(event, 'wal_written'):
             return
 
-        if not self._event_is_complete(event):
+        if not event.event_is_complete():
             return
 
         try:
             await asyncio.to_thread(self._write_event, event)
-            setattr(event, '_wal_written', True)
         except Exception as exc:  # pragma: no cover - logging branch
             logger.error(
                 '❌ %s Failed to save event %s to WAL file %s: %s %s',
@@ -53,14 +52,6 @@ class WALEventBusMiddleware(EventBusMiddleware):
                 type(exc).__name__,
                 exc,
             )
-
-    def _event_is_complete(self, event: BaseEvent[Any]) -> bool:
-        signal = event.event_completed_signal
-        if signal is not None and not signal.is_set():
-            return False
-        if any(result.status not in ('completed', 'error') for result in event.event_results.values()):
-            return False
-        return event.event_are_all_children_complete()
 
     def _write_event(self, event: BaseEvent[Any]) -> None:
         event_json = event.model_dump_json()  # pyright: ignore[reportUnknownMemberType]
@@ -77,14 +68,12 @@ class LoggerEventBusMiddleware(EventBusMiddleware):
         if self.log_path is not None:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
 
-    async def post_event_completed(self, eventbus: EventBus, event: BaseEvent[Any]) -> None:
-        if getattr(event, '_logger_middleware_logged', False):
+    async def on_event_complete(self, eventbus: EventBus, event: BaseEvent[Any]) -> None:
+        if not self._once_per_event(event, 'logged'):
             return
 
-        if not self._event_is_complete(event):
+        if not event.event_is_complete():
             return
-
-        setattr(event, '_logger_middleware_logged', True)
 
         summary = event.event_log_safe_summary()
         logger.info('✅ %s completed event %s', eventbus, summary)
@@ -94,14 +83,6 @@ class LoggerEventBusMiddleware(EventBusMiddleware):
 
         if logger.isEnabledFor(logging.DEBUG):
             log_eventbus_tree(eventbus)
-
-    def _event_is_complete(self, event: BaseEvent[Any]) -> bool:
-        signal = event.event_completed_signal
-        if signal is not None and not signal.is_set():
-            return False
-        if any(result.status not in ('completed', 'error') for result in event.event_results.values()):
-            return False
-        return event.event_are_all_children_complete()
 
     def _append_line(self, line: str) -> None:
         if self.log_path is not None:
@@ -127,9 +108,9 @@ class SQLiteHistoryMirrorMiddleware(EventBusMiddleware):
         except Exception:
             pass
 
-    async def post_event_snapshot_recorded(self, eventbus: EventBus, event: BaseEvent[Any], phase: str) -> None:
+    async def on_event_state_change(self, eventbus: EventBus, event: BaseEvent[Any], status: EventStatus) -> None:
         event_status = (
-            'error' if any(result.status == 'error' for result in event.event_results.values()) else event.event_status
+            EventStatus.ERROR if any(result.status == 'error' for result in event.event_results.values()) else event.event_status
         )
         event_json = event.model_dump_json()
         await asyncio.to_thread(
@@ -137,17 +118,17 @@ class SQLiteHistoryMirrorMiddleware(EventBusMiddleware):
             eventbus,
             event.event_id,
             event.event_type,
-            event_status,
-            phase,
+            str(event_status),
+            str(status),
             event_json,
         )
 
-    async def post_event_handler_snapshot_recorded(
+    async def on_handler_state_change(
         self,
         eventbus: EventBus,
         event: BaseEvent[Any],
         event_result: EventResult[Any],
-        phase: str,
+        status: EventStatus,
     ) -> None:
         error_repr = repr(event_result.error) if event_result.error is not None else None
         result_repr: str | None = None
@@ -172,7 +153,7 @@ class SQLiteHistoryMirrorMiddleware(EventBusMiddleware):
             eventbus.name,
             event.event_type,
             event_result.status,
-            phase,
+            str(status),
             result_repr,
             error_repr,
             event_result_json,

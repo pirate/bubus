@@ -64,7 +64,7 @@ class TestEventIsChildOf:
 
     async def test_direct_child_returns_true(self):
         """event_is_child_of returns True for direct parent-child relationship."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             # Create parent-child relationship via dispatch inside handler
@@ -91,7 +91,7 @@ class TestEventIsChildOf:
 
     async def test_grandchild_returns_true(self):
         """event_is_child_of returns True for grandparent relationship."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             grandchild_ref: list[BaseEvent] = []
@@ -122,7 +122,7 @@ class TestEventIsChildOf:
 
     async def test_unrelated_events_returns_false(self):
         """event_is_child_of returns False for unrelated events."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ParentEvent, lambda e: 'parent_done')
@@ -138,7 +138,7 @@ class TestEventIsChildOf:
 
     async def test_same_event_returns_false(self):
         """event_is_child_of returns False when checking event against itself."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ParentEvent, lambda e: 'done')
@@ -152,7 +152,7 @@ class TestEventIsChildOf:
 
     async def test_reversed_relationship_returns_false(self):
         """event_is_child_of returns False when parent/child are reversed."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             child_ref: list[BaseEvent] = []
@@ -182,7 +182,7 @@ class TestEventIsParentOf:
 
     async def test_direct_parent_returns_true(self):
         """event_is_parent_of returns True for direct parent-child relationship."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             child_ref: list[BaseEvent] = []
@@ -208,7 +208,7 @@ class TestEventIsParentOf:
 
     async def test_grandparent_returns_true(self):
         """event_is_parent_of returns True for grandparent relationship."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             grandchild_ref: list[BaseEvent] = []
@@ -248,7 +248,7 @@ class TestFindPastOnly:
 
     async def test_returns_matching_event_from_history(self):
         """find(past=True, future=False) returns event from history."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ParentEvent, lambda e: 'done')
@@ -267,7 +267,7 @@ class TestFindPastOnly:
 
     async def test_past_float_filters_by_time_window(self):
         """find(past=0.1) only returns events from last 0.1 seconds."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ParentEvent, lambda e: 'done')
@@ -296,7 +296,7 @@ class TestFindPastOnly:
 
     async def test_past_float_returns_none_when_all_events_too_old(self):
         """find(past=0.05) returns None if all events are older than 0.05 seconds."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ParentEvent, lambda e: 'done')
@@ -316,7 +316,7 @@ class TestFindPastOnly:
 
     async def test_returns_none_when_no_match(self):
         """find(past=True, future=False) returns None when no matching event."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             # No events dispatched
@@ -329,7 +329,7 @@ class TestFindPastOnly:
 
     async def test_respects_where_filter(self):
         """find() applies where filter correctly."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ScreenshotEvent, lambda e: 'done')
@@ -354,7 +354,7 @@ class TestFindPastOnly:
 
     async def test_returns_most_recent_match(self):
         """find() returns most recent matching event from history."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ParentEvent, lambda e: 'done')
@@ -379,7 +379,7 @@ class TestFindFutureOnly:
 
     async def test_waits_for_future_event(self):
         """find(past=False, future=1) waits for event to be dispatched."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ParentEvent, lambda e: 'done')
@@ -404,7 +404,7 @@ class TestFindFutureOnly:
 
     async def test_future_float_timeout(self):
         """find(future=0.01) times out quickly when no event."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             start = datetime.now(UTC)
@@ -419,7 +419,7 @@ class TestFindFutureOnly:
 
     async def test_ignores_past_events(self):
         """find(past=False, future=...) ignores events already in history."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ParentEvent, lambda e: 'done')
@@ -441,7 +441,7 @@ class TestFindNeitherPastNorFuture:
 
     async def test_returns_none_immediately(self):
         """find(past=False, future=False) returns None immediately."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ParentEvent, lambda e: 'done')
@@ -466,7 +466,7 @@ class TestFindPastAndFuture:
 
     async def test_returns_past_event_immediately(self):
         """find(past=True, future=5) returns past event without waiting."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ParentEvent, lambda e: 'done')
@@ -488,7 +488,7 @@ class TestFindPastAndFuture:
 
     async def test_waits_for_future_when_no_past_match(self):
         """find(past=True, future=1) waits for future if no past match."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ChildEvent, lambda e: 'done')
@@ -517,7 +517,7 @@ class TestFindPastAndFuture:
 
     async def test_past_and_future_independent_control(self):
         """past=0.05, future=0.05 uses different windows for each."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ParentEvent, lambda e: 'done')
@@ -541,7 +541,7 @@ class TestFindPastAndFuture:
 
     async def test_past_true_future_float(self):
         """past=True searches all history, future=0.1 waits up to 0.1s."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ParentEvent, lambda e: 'done')
@@ -561,7 +561,7 @@ class TestFindPastAndFuture:
 
     async def test_past_float_future_true_would_wait_forever(self):
         """past=0.05 with old events + future=True - verify past window works."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ParentEvent, lambda e: 'done')
@@ -600,7 +600,7 @@ class TestFindWithChildOf:
 
     async def test_returns_child_of_specified_parent(self):
         """find(child_of=parent) returns event that is child of parent."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             child_ref: list[BaseEvent] = []
@@ -627,7 +627,7 @@ class TestFindWithChildOf:
 
     async def test_returns_none_for_non_child(self):
         """find(child_of=parent) returns None if event is not a child."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ParentEvent, lambda e: 'parent_done')
@@ -648,7 +648,7 @@ class TestFindWithChildOf:
 
     async def test_finds_grandchild(self):
         """find(child_of=grandparent) returns grandchild event."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             grandchild_ref: list[BaseEvent] = []
@@ -728,7 +728,7 @@ class TestExpectBackwardsCompatibility:
 
     async def test_expect_waits_for_future_event(self):
         """expect() still waits for future events (existing behavior)."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ParentEvent, lambda e: 'done')
@@ -750,7 +750,7 @@ class TestExpectBackwardsCompatibility:
 
     async def test_expect_with_include_filter(self):
         """expect() with include parameter still works."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ScreenshotEvent, lambda e: 'done')
@@ -780,7 +780,7 @@ class TestExpectBackwardsCompatibility:
 
     async def test_expect_with_exclude_filter(self):
         """expect() with exclude parameter still works."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ScreenshotEvent, lambda e: 'done')
@@ -810,7 +810,7 @@ class TestExpectBackwardsCompatibility:
 
     async def test_expect_with_past_true(self):
         """expect(past=True) finds already-dispatched events."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ParentEvent, lambda e: 'done')
@@ -829,7 +829,7 @@ class TestExpectBackwardsCompatibility:
 
     async def test_expect_with_past_float(self):
         """expect(past=5.0) searches last 5 seconds of history."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ParentEvent, lambda e: 'done')
@@ -848,7 +848,7 @@ class TestExpectBackwardsCompatibility:
 
     async def test_expect_with_child_of(self):
         """expect(child_of=parent) filters by parent relationship."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             child_ref: list[BaseEvent] = []
@@ -884,7 +884,7 @@ class TestDebouncingPattern:
 
     async def test_returns_existing_fresh_event(self):
         """Pattern returns existing event when fresh."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ScreenshotEvent, lambda e: 'done')
@@ -908,7 +908,7 @@ class TestDebouncingPattern:
 
     async def test_dispatches_new_when_no_match(self):
         """Pattern dispatches new event when no matching event in history."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ScreenshotEvent, lambda e: 'done')
@@ -930,7 +930,7 @@ class TestDebouncingPattern:
 
     async def test_dispatches_new_when_stale(self):
         """Pattern dispatches new event when existing is stale."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ScreenshotEvent, lambda e: 'done')
@@ -961,7 +961,7 @@ class TestDebouncingPattern:
 
     async def test_find_past_only_returns_immediately_without_waiting(self):
         """find(past=True, future=False) returns immediately, never waits."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ParentEvent, lambda e: 'done')
@@ -979,7 +979,7 @@ class TestDebouncingPattern:
 
     async def test_find_past_float_returns_immediately_without_waiting(self):
         """find(past=5, future=False) returns immediately, never waits."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ParentEvent, lambda e: 'done')
@@ -997,7 +997,7 @@ class TestDebouncingPattern:
 
     async def test_or_chain_without_waiting_finds_existing(self):
         """Or-chain pattern finds existing events without blocking."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ScreenshotEvent, lambda e: 'done')
@@ -1025,7 +1025,7 @@ class TestDebouncingPattern:
 
     async def test_or_chain_without_waiting_dispatches_when_no_match(self):
         """Or-chain pattern dispatches new event when no match, still fast."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ScreenshotEvent, lambda e: 'done')
@@ -1051,7 +1051,7 @@ class TestDebouncingPattern:
 
     async def test_or_chain_multiple_sequential_lookups(self):
         """Multiple or-chain lookups work without blocking."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ScreenshotEvent, lambda e: 'done')
@@ -1098,7 +1098,7 @@ class TestDebouncingPattern:
 
     async def test_find_without_await_is_a_coroutine(self):
         """find() without await returns a coroutine that can be awaited."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ParentEvent, lambda e: 'done')
@@ -1130,7 +1130,7 @@ class TestRaceConditionFix:
 
     async def test_find_catches_already_fired_event(self):
         """find(past=True) catches event that fired before the call."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             tab_ref: list[BaseEvent] = []
@@ -1161,7 +1161,7 @@ class TestRaceConditionFix:
 
     async def test_child_of_filters_to_correct_parent(self):
         """child_of correctly filters to events from the right parent."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             async def navigate_handler(event: NavigateEvent) -> str:
@@ -1204,7 +1204,7 @@ class TestNewParameterCombinations:
 
     async def test_past_true_future_false_searches_all_history(self):
         """past=True, future=False searches all history instantly."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ParentEvent, lambda e: 'done')
@@ -1223,7 +1223,7 @@ class TestNewParameterCombinations:
 
     async def test_past_float_future_false_filters_by_age(self):
         """past=0.05, future=False only searches last 0.05 seconds."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ParentEvent, lambda e: 'done')
@@ -1241,7 +1241,7 @@ class TestNewParameterCombinations:
 
     async def test_past_false_future_float_waits_for_timeout(self):
         """past=False, future=0.05 waits up to 0.05 seconds."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ParentEvent, lambda e: 'done')
@@ -1258,7 +1258,7 @@ class TestNewParameterCombinations:
 
     async def test_past_true_future_true_searches_all_and_waits_forever(self):
         """past=True, future=True searches all history, would wait forever."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ParentEvent, lambda e: 'done')
@@ -1281,7 +1281,7 @@ class TestNewParameterCombinations:
 
     async def test_find_with_where_and_past_float(self):
         """where filter combined with past=float works correctly."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             bus.on(ScreenshotEvent, lambda e: 'done')
@@ -1315,7 +1315,7 @@ class TestNewParameterCombinations:
 
     async def test_find_with_child_of_and_past_float(self):
         """child_of filter combined with past=float works correctly."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             child_ref: list[BaseEvent] = []
@@ -1346,7 +1346,7 @@ class TestNewParameterCombinations:
 
     async def test_find_with_all_parameters(self):
         """All parameters combined work correctly."""
-        bus = EventBus(name='TestBus')
+        bus = EventBus()
 
         try:
             child_ref: list[BaseEvent] = []

@@ -7,7 +7,7 @@ from .middlewares import (
     SQLiteHistoryMirrorMiddleware,
     WALEventBusMiddleware,
 )
-from .models import BaseEvent, EventHandler, EventResult, PythonIdentifierStr, PythonIdStr, UUIDStr
+from .models import BaseEvent, EventHandler, EventResult, EventStatus, PythonIdentifierStr, PythonIdStr, UUIDStr
 from .service import EventBus
 
 __all__ = [
@@ -19,6 +19,7 @@ __all__ = [
     'EventHistory',
     'InMemoryEventHistory',
     'BaseEvent',
+    'EventStatus',
     'EventResult',
     'EventHandler',
     'UUIDStr',

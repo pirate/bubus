@@ -6,6 +6,7 @@ import os
 from collections import deque
 from collections.abc import Awaitable, Callable, Generator
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Generic, Literal, Protocol, Self, TypeAlias, cast, runtime_checkable
 from uuid import UUID
 
@@ -32,6 +33,18 @@ BUBUS_LOGGING_LEVEL = os.getenv('BUBUS_LOGGING_LEVEL', 'WARNING').upper()  # WAR
 LIBRARY_VERSION = os.getenv('LIBRARY_VERSION', '1.0.0')
 
 logger.setLevel(BUBUS_LOGGING_LEVEL)
+
+
+class EventStatus(StrEnum):
+    """Status of an event or handler in the EventBus lifecycle.
+
+    Using StrEnum ensures backwards compatibility - comparisons like
+    `status == 'pending'` still work since EventStatus.PENDING == 'pending'.
+    """
+    PENDING = 'pending'
+    STARTED = 'started'
+    COMPLETED = 'completed'
+    ERROR = 'error'
 
 
 def validate_event_name(s: str) -> str:
@@ -323,7 +336,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
                     # Check if THIS event is in this bus's queue
                     if self._remove_self_from_queue(bus):
                         # Process only this event on this bus
-                        await bus.process_event(self)
+                        await bus.handle_event(self)
                         bus.event_queue.task_done()
                         processed_any = True
 
@@ -449,8 +462,24 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         return self._event_completed_signal
 
     @property
-    def event_status(self) -> str:
-        return 'completed' if self.event_completed_at else 'started' if self.event_started_at else 'pending'
+    def event_status(self) -> EventStatus:
+        """Current status of this event in the lifecycle."""
+        return EventStatus.COMPLETED if self.event_completed_at else EventStatus.STARTED if self.event_started_at else EventStatus.PENDING
+
+    def event_is_complete(self) -> bool:
+        """Check if this event and all its handlers/children have finished processing.
+
+        Returns True if:
+        - The completion signal is set (if it exists)
+        - All handlers have status 'completed' or 'error'
+        - All child events are recursively complete
+        """
+        signal = self.event_completed_signal
+        if signal is not None and not signal.is_set():
+            return False
+        if any(result.status not in ('completed', 'error') for result in self.event_results.values()):
+            return False
+        return self.event_are_all_children_complete()
 
     @property
     def event_children(self) -> list['BaseEvent[Any]']:

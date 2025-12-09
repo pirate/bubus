@@ -318,10 +318,14 @@ class TestHandlerRegistration:
         processor1 = EventProcessor('Processor1', 10)
         processor2 = EventProcessor('Processor2', 20)
 
-        # Register instance methods
+        # Register instance methods (suppress warning about same-named handlers from different instances)
+        import warnings
+
         eventbus.on(UserActionEvent, processor1.sync_method_handler)
         eventbus.on(UserActionEvent, processor1.async_method_handler)
-        eventbus.on(UserActionEvent, processor2.sync_method_handler)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', UserWarning)
+            eventbus.on(UserActionEvent, processor2.sync_method_handler)
 
         # Register class and static methods
         eventbus.on('UserActionEvent', EventProcessor.class_method_handler)
@@ -876,10 +880,10 @@ class TestHandlerMiddleware:
             def __init__(self, call_log: list[tuple[str, str]]):
                 self.call_log = call_log
 
-            async def pre_event_handler_started(self, eventbus: EventBus, event: BaseEvent, event_result):
+            async def on_handler_start(self, eventbus: EventBus, event: BaseEvent, event_result):
                 self.call_log.append(('before', event_result.status))
 
-            async def post_event_handler_completed(
+            async def on_handler_success(
                 self, eventbus: EventBus, event: BaseEvent, event_result
             ):
                 self.call_log.append(('after', event_result.status))
@@ -906,10 +910,10 @@ class TestHandlerMiddleware:
             def __init__(self, log: list[tuple[str, str]]):
                 self.log = log
 
-            async def pre_event_handler_started(self, eventbus: EventBus, event: BaseEvent, event_result):
+            async def on_handler_start(self, eventbus: EventBus, event: BaseEvent, event_result):
                 self.log.append(('before', event_result.status))
 
-            async def post_event_handler_failed(
+            async def on_handler_error(
                 self,
                 eventbus: EventBus,
                 event: BaseEvent,
