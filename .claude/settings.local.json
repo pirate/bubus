@@ -20,7 +20,10 @@
       "Bash(echo:*)",
       "Bash(grep:*)",
       "Bash(rg:*)",
-      "Bash(.venv/bin/pytest tests/test_typed_event_results.py::test_builtin_type_casting -v -s --timeout=10)"
+      "WebFetch(domain:github.com)",
+      "Bash(timeout 60 .venv/bin/pytest:*)",
+      "Bash(timeout 180 .venv/bin/pytest tests/ -v)",
+      "Bash(timeout 180 .venv/bin/pytest:*)"
     ],
     "deny": []
   }
