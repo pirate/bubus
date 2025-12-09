@@ -880,13 +880,11 @@ class TestHandlerMiddleware:
             def __init__(self, call_log: list[tuple[str, str]]):
                 self.call_log = call_log
 
-            async def on_handler_start(self, eventbus: EventBus, event: BaseEvent, event_result):
-                self.call_log.append(('before', event_result.status))
-
-            async def on_handler_success(
-                self, eventbus: EventBus, event: BaseEvent, event_result
-            ):
-                self.call_log.append(('after', event_result.status))
+            async def on_event_result_change(self, eventbus: EventBus, event: BaseEvent, event_result, status):
+                if status == 'started':
+                    self.call_log.append(('before', event_result.status))
+                elif status == 'completed':
+                    self.call_log.append(('after', event_result.status))
 
         bus = EventBus(middlewares=[TrackingMiddleware(calls)])
         bus.on('UserActionEvent', lambda event: 'ok')
@@ -910,17 +908,11 @@ class TestHandlerMiddleware:
             def __init__(self, log: list[tuple[str, str]]):
                 self.log = log
 
-            async def on_handler_start(self, eventbus: EventBus, event: BaseEvent, event_result):
-                self.log.append(('before', event_result.status))
-
-            async def on_handler_error(
-                self,
-                eventbus: EventBus,
-                event: BaseEvent,
-                event_result,
-                error: BaseException,
-            ):
-                self.log.append(('error', type(error).__name__))
+            async def on_event_result_change(self, eventbus: EventBus, event: BaseEvent, event_result, status):
+                if status == 'started':
+                    self.log.append(('before', event_result.status))
+                elif status == 'completed' and event_result.error:
+                    self.log.append(('error', type(event_result.error).__name__))
 
         async def failing_handler(event: BaseEvent) -> None:
             raise ValueError('boom')
@@ -1035,11 +1027,11 @@ class TestLoggerMiddleware:
             events = conn.execute('SELECT phase, event_status FROM events_log ORDER BY id').fetchall()
             conn.close()
 
-            assert [phase for phase, *_ in result_rows] == ['pending', 'started', 'error']
+            assert [phase for phase, *_ in result_rows] == ['pending', 'started', 'completed']
             assert [status for _, status, *_ in result_rows] == ['pending', 'started', 'error']
             assert 'RuntimeError' in result_rows[-1][2]
-            assert [phase for phase, _ in events] == ['pending', 'started', 'error']
-            assert [status for _, status in events] == ['pending', 'started', 'error']
+            assert [phase for phase, _ in events] == ['pending', 'started', 'completed']
+            assert [status for _, status in events] == ['pending', 'started', 'completed']
         finally:
             await bus.stop()
 

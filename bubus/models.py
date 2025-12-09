@@ -43,8 +43,7 @@ class EventStatus(StrEnum):
     """
     PENDING = 'pending'
     STARTED = 'started'
-    COMPLETED = 'completed'
-    ERROR = 'error'
+    COMPLETED = 'completed'   # errored events are also considered completed
 
 
 def validate_event_name(s: str) -> str:
@@ -286,8 +285,6 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             if self.event_status == 'pending'
             else '✅'
             if self.event_status == 'completed'
-            else '❌'
-            if self.event_status == 'error'
             else '🏃'
         )
         # AuthBus≫DataBus▶ AuthLoginEvent#ab12 ⏳
@@ -465,21 +462,6 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     def event_status(self) -> EventStatus:
         """Current status of this event in the lifecycle."""
         return EventStatus.COMPLETED if self.event_completed_at else EventStatus.STARTED if self.event_started_at else EventStatus.PENDING
-
-    def event_is_complete(self) -> bool:
-        """Check if this event and all its handlers/children have finished processing.
-
-        Returns True if:
-        - The completion signal is set (if it exists)
-        - All handlers have status 'completed' or 'error'
-        - All child events are recursively complete
-        """
-        signal = self.event_completed_signal
-        if signal is not None and not signal.is_set():
-            return False
-        if any(result.status not in ('completed', 'error') for result in self.event_results.values()):
-            return False
-        return self.event_are_all_children_complete()
 
     @property
     def event_children(self) -> list['BaseEvent[Any]']:

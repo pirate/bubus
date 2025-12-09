@@ -62,74 +62,26 @@ EventPatternType = PythonIdentifierStr | Literal['*'] | type[BaseEvent[Any]]
 class EventBusMiddleware:
     """Hookable lifecycle interface for observing or extending EventBus execution.
 
-    Override the hooks you need. All hooks are async and receive the EventBus instance.
-
     Hooks:
-        on_handler_start: Called just before a handler begins execution
-        on_handler_success: Called after a handler completes successfully
-        on_handler_error: Called when a handler raises or is cancelled
-        on_event_state_change: Called on event state transitions (pending/started/completed/error)
-        on_handler_state_change: Called on handler state transitions
-        on_event_complete: Called after an event and all handlers have finished
+        on_event_change(eventbus, event, status): Called on event state transitions
+        on_event_result_change(eventbus, event, event_result, status): Called on EventResult state transitions
+
+    Status values: EventStatus.PENDING, STARTED, COMPLETED, ERROR
     """
 
-    def _once_per_event(self, event: BaseEvent[Any], key: str) -> bool:
-        """Returns True the first time called for this event/key combo, False after.
-
-        Use this to ensure idempotent processing when a hook might be called multiple times:
-
-            async def on_event_complete(self, eventbus, event):
-                if not self._once_per_event(event, 'logged'):
-                    return
-                # ... do work only once ...
-        """
-        attr = f'_middleware_{id(self)}_{key}'
-        if getattr(event, attr, False):
-            return False
-        setattr(event, attr, True)
-        return True
-
-    async def on_handler_start(
-        self, eventbus: 'EventBus', event: BaseEvent[Any], event_result: EventResult[Any]
-    ) -> None:
-        """Called just before a handler begins execution."""
-        return None
-
-    async def on_handler_success(
-        self, eventbus: 'EventBus', event: BaseEvent[Any], event_result: EventResult[Any]
-    ) -> None:
-        """Called after a handler completes successfully."""
-        return None
-
-    async def on_handler_error(
-        self,
-        eventbus: 'EventBus',
-        event: BaseEvent[Any],
-        event_result: EventResult[Any],
-        error: BaseException,
-    ) -> None:
-        """Called when a handler raises or is cancelled."""
-        return None
-
-    async def on_event_state_change(
+    async def on_event_change(
         self, eventbus: 'EventBus', event: BaseEvent[Any], status: EventStatus
     ) -> None:
         """Called on event state transitions (pending, started, completed, error)."""
-        return None
 
-    async def on_handler_state_change(
+    async def on_event_result_change(
         self,
         eventbus: 'EventBus',
         event: BaseEvent[Any],
         event_result: EventResult[Any],
         status: EventStatus,
     ) -> None:
-        """Called on handler state transitions (pending, started, completed, error)."""
-        return None
-
-    async def on_event_complete(self, eventbus: 'EventBus', event: BaseEvent[Any]) -> None:
-        """Called after an event and all of its handlers have finished."""
-        return None
+        """Called on EventResult state transitions (pending, started, completed, error)."""
 
 
 def _is_middleware_class(candidate: object) -> TypeGuard[type['EventBusMiddleware']]:
@@ -467,86 +419,18 @@ class EventBus:
         if inspect.isawaitable(result):
             await result
 
-    # Middleware fan-out helpers ------------------------------------------- #
-    async def _middlewares_on_event_state_change(
-        self, event: BaseEvent[Any], status: EventStatus
-    ) -> None:
+    # Middleware fan-out ---------------------------------------------------- #
+    async def _emit_event_change(self, event: BaseEvent[Any], status: EventStatus) -> None:
         for middleware in self._middlewares:
-            await self._call_middleware_hook(
-                middleware, 'on_event_state_change', self, event, status
-            )
+            await self._call_middleware_hook(middleware, 'on_event_change', self, event, status)
 
-    async def _middlewares_on_handler_state_change(
+    async def _emit_event_result_change(
         self, event: BaseEvent[Any], event_result: EventResult[Any], status: EventStatus
     ) -> None:
         for middleware in self._middlewares:
             await self._call_middleware_hook(
-                middleware,
-                'on_handler_state_change',
-                self,
-                event,
-                event_result,
-                status,
+                middleware, 'on_event_result_change', self, event, event_result, status
             )
-
-    async def _maybe_record_event_started(self, event: BaseEvent[Any]) -> None:
-        if getattr(event, '_history_started_logged', False):
-            return
-        setattr(event, '_history_started_logged', True)
-        await self._middlewares_on_event_state_change(event, EventStatus.STARTED)
-
-    async def _middlewares_on_handler_start(
-        self, event: BaseEvent[Any], event_result: EventResult[Any]
-    ) -> None:
-        for middleware in self._middlewares:
-            await self._call_middleware_hook(
-                middleware, 'on_handler_start', self, event, event_result
-            )
-
-    async def _middlewares_on_handler_success(
-        self, event: BaseEvent[Any], event_result: EventResult[Any]
-    ) -> None:
-        for middleware in self._middlewares:
-            await self._call_middleware_hook(
-                middleware, 'on_handler_success', self, event, event_result
-            )
-
-    async def _middlewares_on_handler_error(
-        self, event: BaseEvent[Any], event_result: EventResult[Any], error: BaseException
-    ) -> None:
-        for middleware in self._middlewares:
-            await self._call_middleware_hook(
-                middleware, 'on_handler_error', self, event, event_result, error
-            )
-
-    async def _middlewares_on_event_complete(self, event: BaseEvent[Any]) -> None:
-        for middleware in self._middlewares:
-            await self._call_middleware_hook(middleware, 'on_event_complete', self, event)
-
-    async def _dispatch_after_event_hooks(self, event: BaseEvent[Any]) -> None:
-        if getattr(event, '_after_event_hooks_run', False):
-            return
-
-        event_completed = False
-        if event.event_completed_signal is not None and event.event_completed_signal.is_set():
-            event_completed = True
-        elif event.event_results and all(result.status in ('completed', 'error') for result in event.event_results.values()):
-            event_completed = True
-
-        if not event_completed:
-            return
-
-        if not getattr(event, '_history_completed_logged', False):
-            setattr(event, '_history_completed_logged', True)
-            final_status = (
-                EventStatus.ERROR
-                if any(result.status == 'error' for result in event.event_results.values())
-                else EventStatus.COMPLETED
-            )
-            await self._middlewares_on_event_state_change(event, final_status)
-
-        setattr(event, '_after_event_hooks_run', True)
-        await self._middlewares_on_event_complete(event)
 
     @property
     def events_pending(self) -> list[BaseEvent[Any]]:
@@ -757,7 +641,7 @@ class EventBus:
                 self.event_history[event.event_id] = event
                 loop = asyncio.get_running_loop()
                 loop.create_task(
-                    self._middlewares_on_event_state_change(event, EventStatus.PENDING)
+                    self._emit_event_change(event, EventStatus.PENDING)
                 )
                 logger.info(
                     f'🗣️ {self}.dispatch({event.event_type}) ➡️ {event.event_type}#{event.event_id[-4:]} (#{self.event_queue.qsize()} {event.event_status})'
@@ -1534,10 +1418,12 @@ class EventBus:
         # Execute handlers
         await self._execute_handlers(event, handlers=applicable_handlers, timeout=timeout)
 
-        # Mark event as complete if all handlers are done
+        # Mark event as complete and emit change if it just completed
+        was_complete = event.event_completed_signal and event.event_completed_signal.is_set()
         event.event_mark_complete_if_all_handlers_completed()
-
-        await self._dispatch_after_event_hooks(event)
+        just_completed = not was_complete and event.event_completed_signal and event.event_completed_signal.is_set()
+        if just_completed:
+            await self._emit_event_change(event, EventStatus.COMPLETED)
 
         # After processing this event, check if any parent events can now be marked complete
         # We do this by walking up the parent chain
@@ -1561,11 +1447,12 @@ class EventBus:
                 break
 
             # Check if parent can be marked complete
-            if parent_event.event_completed_signal and not parent_event.event_completed_signal.is_set():
+            was_complete = parent_event.event_completed_signal and parent_event.event_completed_signal.is_set()
+            if not was_complete:
                 parent_event.event_mark_complete_if_all_handlers_completed()
-
-            if parent_bus:
-                await parent_bus._dispatch_after_event_hooks(parent_event)
+            just_completed = not was_complete and parent_event.event_completed_signal and parent_event.event_completed_signal.is_set()
+            if parent_bus and just_completed:
+                await parent_bus._emit_event_change(parent_event, EventStatus.COMPLETED)
 
             # Move up the chain
             current = parent_event
@@ -1623,14 +1510,13 @@ class EventBus:
         """Execute all handlers for an event in parallel"""
         applicable_handlers = handlers if (handlers is not None) else self._get_applicable_handlers(event)
         if not applicable_handlers:
-            event.event_mark_complete_if_all_handlers_completed()  # mark event completed immediately if it has no handlers
-            return
+            return  # handle_event will mark complete
 
         pending_results = event.event_create_pending_results(
             applicable_handlers, eventbus=self, timeout=timeout or event.event_timeout
         )
         for pending_result in pending_results.values():
-            await self._middlewares_on_handler_state_change(
+            await self._emit_event_result_change(
                 event, pending_result, EventStatus.PENDING
             )
 
@@ -1684,19 +1570,21 @@ class EventBus:
                 {handler_id: handler}, eventbus=self, timeout=timeout or event.event_timeout
             )
             for pending_result in new_results.values():
-                await self._middlewares_on_handler_state_change(
+                await self._emit_event_result_change(
                     event, pending_result, EventStatus.PENDING
                 )
 
         event_result = event.event_results[handler_id]
 
-        event_result.update(status='started', timeout=timeout or event.event_timeout)
-        await self._middlewares_on_handler_state_change(
-            event, event_result, EventStatus.STARTED
-        )
-        await self._maybe_record_event_started(event)
+        # Check if this is the first handler to start (before updating status)
+        is_first_handler = not any(r.started_at for r in event.event_results.values())
 
-        await self._middlewares_on_handler_start(event, event_result)
+        event_result.update(status='started', timeout=timeout or event.event_timeout)
+        await self._emit_event_result_change(event, event_result, EventStatus.STARTED)
+
+        # Emit event STARTED once (when first handler starts)
+        if is_first_handler:
+            await self._emit_event_change(event, EventStatus.STARTED)
 
         try:
             result_value = await event_result.execute(
@@ -1714,22 +1602,19 @@ class EventBus:
                 f'    ↳ Handler {get_handler_name(handler)}#{handler_id[-4:]} returned: {result_type_name}'
             )
 
-            await self._middlewares_on_handler_success(event, event_result)
-            await self._middlewares_on_handler_state_change(
+            await self._emit_event_result_change(
                 event, event_result, EventStatus.COMPLETED
             )
             return cast(T_EventResultType, result_value)
 
-        except asyncio.CancelledError as exc:
-            await self._middlewares_on_handler_error(event, event_result, exc)
-            await self._middlewares_on_handler_state_change(
-                event, event_result, EventStatus.ERROR
+        except asyncio.CancelledError:
+            await self._emit_event_result_change(
+                event, event_result, EventStatus.COMPLETED
             )
             raise
-        except Exception as exc:
-            await self._middlewares_on_handler_error(event, event_result, exc)
-            await self._middlewares_on_handler_state_change(
-                event, event_result, EventStatus.ERROR
+        except Exception:
+            await self._emit_event_result_change(
+                event, event_result, EventStatus.COMPLETED
             )
             raise
 

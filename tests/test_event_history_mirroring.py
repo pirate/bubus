@@ -103,7 +103,7 @@ async def test_sqlite_mirror_matches_inmemory_error(tmp_path: Path) -> None:
     conn = sqlite3.connect(db_path)
     phases = conn.execute('SELECT DISTINCT phase FROM events_log').fetchall()
     conn.close()
-    assert {phase for (phase,) in phases} >= {'pending', 'started', 'error'}
+    assert {phase for (phase,) in phases} >= {'pending', 'started', 'completed'}
 
 
 def _worker_dispatch(db_path: str, worker_id: int) -> None:

@@ -34,61 +34,47 @@ class WALEventBusMiddleware(EventBusMiddleware):
         self.wal_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
 
-    async def on_event_complete(self, eventbus: EventBus, event: BaseEvent[Any]) -> None:
-        if not self._once_per_event(event, 'wal_written'):
+    async def on_event_change(self, eventbus: EventBus, event: BaseEvent[Any], status: EventStatus) -> None:
+        if status != EventStatus.COMPLETED:
             return
-
-        if not event.event_is_complete():
-            return
-
         try:
-            await asyncio.to_thread(self._write_event, event)
-        except Exception as exc:  # pragma: no cover - logging branch
-            logger.error(
-                '❌ %s Failed to save event %s to WAL file %s: %s %s',
-                eventbus,
-                event.event_id,
-                self.wal_path,
-                type(exc).__name__,
-                exc,
-            )
+            event_json = event.model_dump_json()  # pyright: ignore[reportUnknownMemberType]
+            await asyncio.to_thread(self._write_line, event_json + '\n')
+        except Exception as exc:  # pragma: no cover
+            logger.error('❌ %s Failed to save event %s to WAL: %s', eventbus, event.event_id, exc)
 
-    def _write_event(self, event: BaseEvent[Any]) -> None:
-        event_json = event.model_dump_json()  # pyright: ignore[reportUnknownMemberType]
+    def _write_line(self, line: str) -> None:
         with self._lock:
             with self.wal_path.open('a', encoding='utf-8') as fp:
-                fp.write(event_json + '\n')
+                fp.write(line)
 
 
 class LoggerEventBusMiddleware(EventBusMiddleware):
-    """Log completed events using the existing logging helpers and optionally mirror to a text file."""
+    """Log completed events to stdout and optionally to a file."""
 
     def __init__(self, log_path: Path | str | None = None):
         self.log_path = Path(log_path) if log_path is not None else None
         if self.log_path is not None:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
 
-    async def on_event_complete(self, eventbus: EventBus, event: BaseEvent[Any]) -> None:
-        if not self._once_per_event(event, 'logged'):
-            return
-
-        if not event.event_is_complete():
+    async def on_event_change(self, eventbus: EventBus, event: BaseEvent[Any], status: EventStatus) -> None:
+        if status != EventStatus.COMPLETED:
             return
 
         summary = event.event_log_safe_summary()
         logger.info('✅ %s completed event %s', eventbus, summary)
-
         line = f'[{eventbus.name}] {summary}\n'
-        await asyncio.to_thread(self._append_line, line)
+
+        if self.log_path is not None:
+            await asyncio.to_thread(self._write_line, line)
+        print(line.rstrip('\n'), flush=True)
 
         if logger.isEnabledFor(logging.DEBUG):
             log_eventbus_tree(eventbus)
 
-    def _append_line(self, line: str) -> None:
-        if self.log_path is not None:
-            with self.log_path.open('a', encoding='utf-8') as fp:
-                fp.write(line)
-        print(line.rstrip('\n'), flush=True)
+    def _write_line(self, line: str) -> None:
+        with self.log_path.open('a', encoding='utf-8') as fp:  # type: ignore[union-attr]
+            fp.write(line)
 
 
 class SQLiteHistoryMirrorMiddleware(EventBusMiddleware):
@@ -108,22 +94,19 @@ class SQLiteHistoryMirrorMiddleware(EventBusMiddleware):
         except Exception:
             pass
 
-    async def on_event_state_change(self, eventbus: EventBus, event: BaseEvent[Any], status: EventStatus) -> None:
-        event_status = (
-            EventStatus.ERROR if any(result.status == 'error' for result in event.event_results.values()) else event.event_status
-        )
+    async def on_event_change(self, eventbus: EventBus, event: BaseEvent[Any], status: EventStatus) -> None:
         event_json = event.model_dump_json()
         await asyncio.to_thread(
             self._insert_event_snapshot,
             eventbus,
             event.event_id,
             event.event_type,
-            str(event_status),
+            str(event.event_status),
             str(status),
             event_json,
         )
 
-    async def on_handler_state_change(
+    async def on_event_result_change(
         self,
         eventbus: EventBus,
         event: BaseEvent[Any],
