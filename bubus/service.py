@@ -10,7 +10,7 @@ from collections.abc import Callable, Sequence
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, TypeGuard, TypeVar, cast, overload
+from typing import Any, Literal, TypeVar, cast, overload
 
 from uuid_extensions import uuid7str  # pyright: ignore[reportMissingImports, reportUnknownVariableType]
 
@@ -82,10 +82,6 @@ class EventBusMiddleware:
         status: EventStatus,
     ) -> None:
         """Called on EventResult state transitions (pending, started, completed, error)."""
-
-
-def _is_middleware_class(candidate: object) -> TypeGuard[type['EventBusMiddleware']]:
-    return isinstance(candidate, type) and issubclass(candidate, EventBusMiddleware)
 
 
 class CleanShutdownQueue(asyncio.Queue[QueueEntryType]):
@@ -314,7 +310,7 @@ class EventBus:
         name: PythonIdentifierStr | None = None,
         parallel_handlers: bool = False,
         max_history_size: int | None = 50,  # Keep only 50 events in history
-        middlewares: Sequence[EventBusMiddleware | type[EventBusMiddleware]] | None = None,
+        middlewares: Sequence[EventBusMiddleware] | None = None,
     ):
         self.id = uuid7str()
         self.name = name or f'{self.__class__.__name__}_{self.id[-8:]}'
@@ -354,8 +350,7 @@ class EventBus:
         self.handlers = defaultdict(list)
         self.parallel_handlers = parallel_handlers
         self._on_idle = None
-        self._middlewares: list[EventBusMiddleware] = []
-        self.middlewares = list(middlewares or [])
+        self.middlewares: list[EventBusMiddleware] = list(middlewares or [])
 
         # Memory leak prevention settings
         self.max_history_size = max_history_size
@@ -388,49 +383,15 @@ class EventBus:
     def __repr__(self) -> str:
         return str(self)
 
-    @property
-    def middlewares(self) -> list[EventBusMiddleware]:
-        return getattr(self, '_middlewares', [])
+    async def _on_event_change(self, event: BaseEvent[Any], status: EventStatus) -> None:
+        for middleware in self.middlewares:
+            await middleware.on_event_change(self, event, status)
 
-    @middlewares.setter
-    def middlewares(self, value: Sequence[EventBusMiddleware | type[EventBusMiddleware]]) -> None:
-        instances: list[EventBusMiddleware] = []
-        for middleware in value:
-            if isinstance(middleware, EventBusMiddleware):
-                instances.append(middleware)
-            elif _is_middleware_class(middleware):
-                instances.append(middleware())
-            else:
-                raise TypeError(
-                    f'Invalid middleware {middleware!r}. Expected EventBusMiddleware instance or subclass.'
-                )
-        self._middlewares = instances
-
-    async def _call_middleware_hook(
-        self,
-        middleware: EventBusMiddleware,
-        method_name: str,
-        *args: Any,
-    ) -> None:
-        method = getattr(middleware, method_name, None)
-        if method is None:
-            return
-        result = method(*args)
-        if inspect.isawaitable(result):
-            await result
-
-    # Middleware fan-out ---------------------------------------------------- #
-    async def _emit_event_change(self, event: BaseEvent[Any], status: EventStatus) -> None:
-        for middleware in self._middlewares:
-            await self._call_middleware_hook(middleware, 'on_event_change', self, event, status)
-
-    async def _emit_event_result_change(
+    async def _on_event_result_change(
         self, event: BaseEvent[Any], event_result: EventResult[Any], status: EventStatus
     ) -> None:
-        for middleware in self._middlewares:
-            await self._call_middleware_hook(
-                middleware, 'on_event_result_change', self, event, event_result, status
-            )
+        for middleware in self.middlewares:
+            await middleware.on_event_result_change(self, event, event_result, status)
 
     @property
     def events_pending(self) -> list[BaseEvent[Any]]:
@@ -641,7 +602,7 @@ class EventBus:
                 self.event_history[event.event_id] = event
                 loop = asyncio.get_running_loop()
                 loop.create_task(
-                    self._emit_event_change(event, EventStatus.PENDING)
+                    self._on_event_change(event, EventStatus.PENDING)
                 )
                 logger.info(
                     f'🗣️ {self}.dispatch({event.event_type}) ➡️ {event.event_type}#{event.event_id[-4:]} (#{self.event_queue.qsize()} {event.event_status})'
@@ -1423,7 +1384,7 @@ class EventBus:
         event.event_mark_complete_if_all_handlers_completed()
         just_completed = not was_complete and event.event_completed_signal and event.event_completed_signal.is_set()
         if just_completed:
-            await self._emit_event_change(event, EventStatus.COMPLETED)
+            await self._on_event_change(event, EventStatus.COMPLETED)
 
         # After processing this event, check if any parent events can now be marked complete
         # We do this by walking up the parent chain
@@ -1452,7 +1413,7 @@ class EventBus:
                 parent_event.event_mark_complete_if_all_handlers_completed()
             just_completed = not was_complete and parent_event.event_completed_signal and parent_event.event_completed_signal.is_set()
             if parent_bus and just_completed:
-                await parent_bus._emit_event_change(parent_event, EventStatus.COMPLETED)
+                await parent_bus._on_event_change(parent_event, EventStatus.COMPLETED)
 
             # Move up the chain
             current = parent_event
@@ -1516,7 +1477,7 @@ class EventBus:
             applicable_handlers, eventbus=self, timeout=timeout or event.event_timeout
         )
         for pending_result in pending_results.values():
-            await self._emit_event_result_change(
+            await self._on_event_result_change(
                 event, pending_result, EventStatus.PENDING
             )
 
@@ -1570,7 +1531,7 @@ class EventBus:
                 {handler_id: handler}, eventbus=self, timeout=timeout or event.event_timeout
             )
             for pending_result in new_results.values():
-                await self._emit_event_result_change(
+                await self._on_event_result_change(
                     event, pending_result, EventStatus.PENDING
                 )
 
@@ -1580,11 +1541,11 @@ class EventBus:
         is_first_handler = not any(r.started_at for r in event.event_results.values())
 
         event_result.update(status='started', timeout=timeout or event.event_timeout)
-        await self._emit_event_result_change(event, event_result, EventStatus.STARTED)
+        await self._on_event_result_change(event, event_result, EventStatus.STARTED)
 
         # Emit event STARTED once (when first handler starts)
         if is_first_handler:
-            await self._emit_event_change(event, EventStatus.STARTED)
+            await self._on_event_change(event, EventStatus.STARTED)
 
         try:
             result_value = await event_result.execute(
@@ -1602,18 +1563,18 @@ class EventBus:
                 f'    ↳ Handler {get_handler_name(handler)}#{handler_id[-4:]} returned: {result_type_name}'
             )
 
-            await self._emit_event_result_change(
+            await self._on_event_result_change(
                 event, event_result, EventStatus.COMPLETED
             )
             return cast(T_EventResultType, result_value)
 
         except asyncio.CancelledError:
-            await self._emit_event_result_change(
+            await self._on_event_result_change(
                 event, event_result, EventStatus.COMPLETED
             )
             raise
         except Exception:
-            await self._emit_event_result_change(
+            await self._on_event_result_change(
                 event, event_result, EventStatus.COMPLETED
             )
             raise
