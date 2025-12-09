@@ -781,6 +781,8 @@ class EventBus:
         exclude: Callable[[BaseEvent[Any] | T_ExpectedEvent], bool] = lambda _: False,
         predicate: Callable[[BaseEvent[Any] | T_ExpectedEvent], bool] = lambda _: True,
         timeout: float | None = None,
+        past: bool | float = False,
+        child_of: BaseEvent[Any] | None = None,
     ) -> T_ExpectedEvent | None: ...
 
     @overload
@@ -791,6 +793,8 @@ class EventBus:
         exclude: Callable[[BaseEvent[Any]], bool] = lambda _: False,
         predicate: Callable[[BaseEvent[Any]], bool] = lambda _: True,
         timeout: float | None = None,
+        past: bool | float = False,
+        child_of: BaseEvent[Any] | None = None,
     ) -> BaseEvent[Any] | None: ...
 
     async def expect(
@@ -800,9 +804,14 @@ class EventBus:
         exclude: Callable[[BaseEvent[Any]], bool] = lambda _: False,
         predicate: Callable[[BaseEvent[Any]], bool] = lambda _: True,
         timeout: float | None = None,
+        past: bool | float = False,
+        child_of: BaseEvent[Any] | None = None,
     ) -> BaseEvent[Any] | T_ExpectedEvent | None:
         """
         Wait for an event matching the given type/pattern with optional filters.
+
+        This is a backwards-compatible wrapper around find(). For new code, consider
+        using find() directly for clearer semantics.
 
         Args:
                 event_type: The event type string or model class to wait for
@@ -810,6 +819,11 @@ class EventBus:
                 exclude: Filter function that must return False for the event to match (default: lambda e: False)
                 predicate: Deprecated name, alias for include (default: lambda e: True)
                 timeout: Maximum time to wait in seconds as a float (None = wait forever)
+                past: Controls history search (default: False):
+                    - True: search all history first
+                    - False: skip history search
+                    - float: search events from last N seconds
+                child_of: Only match events that are descendants of this parent event
 
         Returns:
                 The first matching event, or None if no match arrives before the timeout
@@ -831,46 +845,35 @@ class EventBus:
                         exclude=lambda e: e.error_code is not None,
                         timeout=30
                 )
+
+                # Search history first, then wait for future
+                response = await eventbus.expect(
+                        'ResponseEvent',
+                        past=True,
+                        timeout=30
+                )
         """
-        future: asyncio.Future[BaseEvent[Any]] = asyncio.Future()
+        # Merge include/exclude/predicate into single where function for find()
+        def where(event: BaseEvent[Any]) -> bool:
+            if predicate is not None and not predicate(event):  # type: ignore[truthy-function]
+                return False
+            if not include(event):
+                return False
+            if exclude(event):
+                return False
+            return True
 
-        # Handle backwards compatibility: merge predicate into include
-        if predicate is not None:  # type: ignore[conditionAlwaysTrue]
-            original_include = include
-            include = lambda e, orig=original_include, pred=predicate: orig(e) and pred(e)
+        # Map timeout to future parameter: None -> True (wait forever), float -> float (wait N seconds)
+        future_param: bool | float = True if timeout is None else timeout
 
-        def notify_expect_handler(event: BaseEvent[Any]) -> None:
-            """Handler that resolves the future when a matching event is found"""
-            if not future.done() and include(event) and not exclude(event):
-                future.set_result(event)
-
-        # make debugging otherwise ephemeral async expect handlers easier by including some metadata in the stacktrace func names
-        current_frame = inspect.currentframe()
-        assert current_frame
-        notify_expect_handler.__name__ = f'{self}.expect({event_type}, timeout={timeout})@{_log_pretty_path(current_frame.f_code.co_filename)}:{current_frame.f_lineno}'  # add file and line number to the name
-
-        # Register temporary listener that watches for matching events and triggers the expect handler
-        self.on(event_type, notify_expect_handler)
-
-        # Ensure the temporary handler runs before user handlers so expect() resolves immediately after dispatch.
-        event_key = event_type.__name__ if isinstance(event_type, type) else str(event_type)
-        handlers_for_key = self.handlers.get(event_key)
-        if handlers_for_key and handlers_for_key[-1] is notify_expect_handler:
-            handlers_for_key.insert(0, handlers_for_key.pop())
-
-        try:
-            # Wait for the future with optional timeout
-            if timeout is not None:
-                return await asyncio.wait_for(future, timeout=timeout)
-            else:
-                return await future
-        except asyncio.TimeoutError:
-            return None
-        finally:
-            # Clean up handler
-            event_key: str = event_type.__name__ if isinstance(event_type, type) else str(event_type)  # pyright: ignore[reportUnknownMemberType, reportPartialTypeErrors]
-            if event_key in self.handlers and notify_expect_handler in self.handlers[event_key]:
-                self.handlers[event_key].remove(notify_expect_handler)
+        # Delegate to find()
+        return await self.find(
+            event_type,
+            where=where,
+            child_of=child_of,
+            past=past,
+            future=future_param,
+        )
 
     @overload
     async def query(
@@ -942,7 +945,198 @@ class EventBus:
 
         return None
 
+    def event_is_child_of(self, event: BaseEvent[Any], ancestor: BaseEvent[Any]) -> bool:
+        """
+        Check if event is a descendant of ancestor (child, grandchild, etc.).
 
+        Walks up the parent chain from event looking for ancestor.
+        Returns True if ancestor is found in the chain, False otherwise.
+
+        Args:
+            event: The potential descendant event
+            ancestor: The potential ancestor event
+
+        Returns:
+            True if event is a descendant of ancestor, False otherwise
+        """
+        current_id = event.event_parent_id
+        visited: set[str] = set()
+
+        while current_id and current_id not in visited:
+            if current_id == ancestor.event_id:
+                return True
+            visited.add(current_id)
+
+            # Find parent event in any bus's history
+            parent = self.event_history.get(current_id)
+            if parent is None:
+                # Check other buses
+                for bus in list(EventBus.all_instances):
+                    if bus is not self and current_id in bus.event_history:
+                        parent = bus.event_history[current_id]
+                        break
+            if parent is None:
+                break
+            current_id = parent.event_parent_id
+
+        return False
+
+    def event_is_parent_of(self, event: BaseEvent[Any], descendant: BaseEvent[Any]) -> bool:
+        """
+        Check if event is an ancestor of descendant (parent, grandparent, etc.).
+
+        This is the inverse of event_is_child_of.
+
+        Args:
+            event: The potential ancestor event
+            descendant: The potential descendant event
+
+        Returns:
+            True if event is an ancestor of descendant, False otherwise
+        """
+        return self.event_is_child_of(descendant, event)
+
+    @overload
+    async def find(
+        self,
+        event_type: type[T_ExpectedEvent],
+        where: Callable[[BaseEvent[Any] | T_ExpectedEvent], bool] = lambda _: True,
+        child_of: BaseEvent[Any] | None = None,
+        past: bool | float = True,
+        future: bool | float = True,
+    ) -> T_ExpectedEvent | None: ...
+
+    @overload
+    async def find(
+        self,
+        event_type: PythonIdentifierStr,
+        where: Callable[[BaseEvent[Any]], bool] = lambda _: True,
+        child_of: BaseEvent[Any] | None = None,
+        past: bool | float = True,
+        future: bool | float = True,
+    ) -> BaseEvent[Any] | None: ...
+
+    async def find(
+        self,
+        event_type: PythonIdentifierStr | type[T_ExpectedEvent],
+        where: Callable[[BaseEvent[Any]], bool] = lambda _: True,
+        child_of: BaseEvent[Any] | None = None,
+        past: bool | float = True,
+        future: bool | float = True,
+    ) -> BaseEvent[Any] | T_ExpectedEvent | None:
+        """
+        Find an event matching criteria in history and/or future.
+
+        This is a unified method that can search past event_history, wait for future
+        events, or both. Use this instead of separate query() and expect() calls.
+
+        Args:
+            event_type: The event type string or model class to find
+            where: Predicate function for filtering (default: lambda _: True)
+            child_of: Only match events that are descendants of this parent event
+            past: Controls history search behavior:
+                - True: search all history
+                - False: skip history search
+                - float: search events from last N seconds only
+            future: Controls future wait behavior:
+                - True: wait forever for matching event
+                - False: don't wait for future events
+                - float: wait up to N seconds for matching event
+
+        Returns:
+            Matching event or None if not found/timeout
+
+        Examples:
+            # Search all history, wait up to 5s for future
+            event = await bus.find(EventType, past=True, future=5)
+
+            # Search last 5s of history, wait forever
+            event = await bus.find(EventType, past=5, future=True)
+
+            # Search last 5s of history, wait up to 5s
+            event = await bus.find(EventType, past=5, future=5)
+
+            # Search all history instantly, don't wait (debouncing)
+            event = await bus.find(EventType, past=True, future=False)
+
+            # Wait up to 5s for future only (like old expect)
+            event = await bus.find(EventType, past=False, future=5)
+
+            # Find child event that may have already fired
+            nav_event = await bus.dispatch(NavigateToUrlEvent(...))
+            new_tab = await bus.find(TabCreatedEvent, child_of=nav_event, past=True, future=5)
+        """
+        # If neither past nor future, return None immediately
+        if past is False and future is False:
+            return None
+
+        # Build combined predicate including child_of check
+        def matches(event: BaseEvent[Any]) -> bool:
+            if not where(event):
+                return False
+            if child_of is not None and not self.event_is_child_of(event, child_of):
+                return False
+            return True
+
+        # Search past history if enabled
+        if past is not False:
+            # Calculate cutoff time if past is a float (time window in seconds)
+            cutoff: datetime | None = None
+            if past is not True:  # past is a float/int specifying time window
+                cutoff = datetime.now(UTC) - timedelta(seconds=float(past))
+
+            events = list(self.event_history.values())
+            for event in reversed(events):
+                # Only match completed events in history
+                if event.event_completed_at is None:
+                    continue
+                # Skip events older than cutoff (dispatched before the time window)
+                if cutoff is not None and event.event_created_at < cutoff:
+                    continue
+                if not self._event_matches_pattern(event, event_type):
+                    continue
+                if matches(event):
+                    return event
+
+        # If not searching future, return None
+        if future is False:
+            return None
+
+        # Wait for future events using expect-like pattern
+        future_result: asyncio.Future[BaseEvent[Any]] = asyncio.Future()
+
+        def notify_find_handler(event: BaseEvent[Any]) -> None:
+            """Handler that resolves the future when a matching event is found"""
+            if not future_result.done() and matches(event):
+                future_result.set_result(event)
+
+        # Add debugging info to handler name
+        current_frame = inspect.currentframe()
+        assert current_frame
+        notify_find_handler.__name__ = f'{self}.find({event_type}, past={past}, future={future})@{_log_pretty_path(current_frame.f_code.co_filename)}:{current_frame.f_lineno}'
+
+        # Register temporary listener
+        self.on(event_type, notify_find_handler)
+
+        # Ensure the temporary handler runs before user handlers
+        event_key = event_type.__name__ if isinstance(event_type, type) else str(event_type)
+        handlers_for_key = self.handlers.get(event_key)
+        if handlers_for_key and handlers_for_key[-1] is notify_find_handler:
+            handlers_for_key.insert(0, handlers_for_key.pop())
+
+        try:
+            # Wait forever if future is True, otherwise wait up to N seconds
+            if future is True:
+                return await future_result
+            else:
+                return await asyncio.wait_for(future_result, timeout=float(future))
+        except asyncio.TimeoutError:
+            return None
+        finally:
+            # Clean up handler
+            event_key = event_type.__name__ if isinstance(event_type, type) else str(event_type)
+            if event_key in self.handlers and notify_find_handler in self.handlers[event_key]:
+                self.handlers[event_key].remove(notify_find_handler)
 
     def _start(self) -> None:
         """Start the event bus if not already running"""

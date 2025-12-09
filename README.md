@@ -29,7 +29,7 @@ class UserLoginEvent(BaseEvent[str]):
 
 async def handle_login(event: UserLoginEvent) -> str:
     auth_request = await event.event_bus.dispatch(AuthRequestEvent(...))  # nested events supported
-    auth_response = await event.event_bus.expect(AuthResponseEvent, timeout=30.0)
+    auth_response = await event.event_bus.find(AuthResponseEvent, child_of=auth_request, future=30)
     return f"User {event.username} logged in admin={event.is_admin} with API response: {await auth_response.event_result()}"
 
 bus = EventBus()
@@ -271,73 +271,92 @@ if __name__ == '__main__':
 
 <br/><br/>
 
-### ⏳ Expect an Event to be Dispatched
+### 🔎 Find Events in History or Wait for Future Events
 
-Wait for specific events to be seen on a bus with optional filtering:
+The `find()` method provides a unified way to search past event history and/or wait for future events. It's the recommended approach for most event lookup scenarios.
+
+The `past` and `future` parameters accept either `bool` or `float` values:
+
+| Value | `past` meaning | `future` meaning |
+|-------|----------------|------------------|
+| `True` | Search all history | Wait forever |
+| `False` | Skip history search | Don't wait |
+| `5.0` | Search last 5 seconds | Wait up to 5 seconds |
 
 ```python
-# Block until a specific event is seen (with optional timeout)
-request_event = await bus.dispatch(RequestEvent(id=123, table='invoices', request_id=999234))
-response_event = await bus.expect(ResponseEvent, timeout=30)
+# Search all history, wait up to 5s for future
+event = await bus.find(ResponseEvent, past=True, future=5)
+
+# Search last 5s of history, wait forever
+event = await bus.find(ResponseEvent, past=5, future=True)
+
+# Search last 5s of history, wait up to 5s
+event = await bus.find(ResponseEvent, past=5, future=5)
+
+# Search all history only, don't wait (instant)
+event = await bus.find(ResponseEvent, past=True, future=False)
+
+# Wait up to 5s for future only (like expect())
+event = await bus.find(ResponseEvent, past=False, future=5)
+
+# With custom filter
+event = await bus.find(ResponseEvent, where=lambda e: e.request_id == my_id, future=5)
 ```
 
-A more complex real-world example showing off all the features:
+#### Finding Child Events
+
+When you dispatch an event that triggers child events, use `child_of` to find specific descendants:
 
 ```python
-async def on_generate_invoice_pdf(event: GenerateInvoiceEvent) -> pdf:
-    request_event = await bus.dispatch(APIRequestEvent(  # example: fire a backend request via some RPC client using bubus
-        method='invoices.generatePdf',
-        invoice_id=event.invoice_id,
-        request_id=uuid4(),
-    ))
-    # ...rpc client should send the request, then call event_bus.dispatch(APIResponseEvent(...)) when it gets a response ...
+# Dispatch a parent event that triggers child events
+nav_event = await bus.dispatch(NavigateToUrlEvent(url="https://example.com"))
 
-    # wait for the response event to be fired by the RPC client
-    is_our_response = lambda response_event: response_event.request_id == request_event.request_id
-    is_succesful = lambda response_event: response_event.invoice_id == event.invoice_id and response_event.invoice_url
-    response_event: APIResponseEvent | None = await bus.expect(
-        APIResponseEvent,                                         # wait for events of this type (also accepts str name)
-        include=lambda e: is_our_response(e) and is_succesful(e), # only include events that match a certain filter func
-        exclude=lambda e: e.status != 'retrying',                 # optionally exclude certain events, overrides include
-        timeout=30,                                               # returns None if no match is seen within 30 sec
-    )
-    if response_event is None:
-        await bus.dispatch(TimedOutError(msg='timed out while waiting for response from server', request_id=request_event.id))
-        return None
+# Find a child event (may have already fired, or wait for it)
+new_tab = await bus.find(TabCreatedEvent, child_of=nav_event, future=5)
+if new_tab:
+    print(f"New tab created: {new_tab.tab_id}")
+```
 
-    return response_event.invoice_url
+This solves race conditions where child events fire before you start waiting for them.
 
-event_bus.on(GenerateInvoiceEvent, on_generate_invoice_pdf)
+#### Tree Traversal Helpers
+
+Check parent-child relationships between events:
+
+```python
+# Check if event is a descendant of another event
+if bus.event_is_child_of(child_event, parent_event):
+    print("child_event is a descendant of parent_event")
+
+# Check if event is an ancestor of another event
+if bus.event_is_parent_of(parent_event, child_event):
+    print("parent_event is an ancestor of child_event")
 ```
 
 > [!IMPORTANT]
-> `expect()` resolves when the event is first *dispatched* to the `EventBus`, not when it completes. `await response_event` to get the completed event.
-> If the timeout elapses with no match, `expect()` returns `None`.
+> `find()` resolves when the event is first *dispatched* to the `EventBus`, not when it completes. Use `await event` to wait for handlers to finish.
+> If no match is found (or future timeout elapses), `find()` returns `None`.
 
 <br/>
 
 ### 🔁 Event Debouncing
 
-Avoid re-running expensive work by checking recent history before dispatching. Combine `query()`, `expect()`, and `dispatch()` to coalesce bursts of identical events:
+Avoid re-running expensive work by reusing recent events. The `find()` method makes debouncing simple:
 
 ```python
-from datetime import timedelta
-
-debounced_event = (
-    await bus.query(SyncWithServerEvent, since=timedelta(seconds=10), include=lambda e: e.user_id == user.id)
-    or await bus.expect(SyncWithServerEvent, timeout=5, include=lambda e: e.user_id == user.id)
-    or await bus.dispatch(SyncWithServerEvent(user_id=user.id))
+# Simple debouncing: reuse event from last 10 seconds, or dispatch new
+event = (
+    await bus.find(ScreenshotEvent, past=10, future=False)  # Check last 10s of history (instant)
+    or await bus.dispatch(ScreenshotEvent())
 )
 
-if debounced_event is None:
-    raise RuntimeError('Sync dispatch failed unexpectedly')
-
-print(f'Last sync completed at {debounced_event.event_completed_at}')
+# More advanced: check history, wait briefly for in-flight, then dispatch
+event = (
+    await bus.find(SyncEvent, past=True, future=False)   # Check all history (instant)
+    or await bus.find(SyncEvent, past=False, future=5)   # Wait up to 5s for in-flight
+    or await bus.dispatch(SyncEvent())                   # Fallback: dispatch new
+)
 ```
-
-- `query()` searches the most recent completed events (newest-first) in memory.
-- `expect()` waits for an in-flight event if none were found in the look-back window.
-- Only when both checks miss do you emit a fresh event, satisfying typical debounce requirements without extra state.
 
 <br/>
 
@@ -699,9 +718,62 @@ if recent_sync is not None:
     print('We already synced recently, skipping')
 ```
 
-##### `expect(event_type: str | Type[BaseEvent], timeout: float | None=None, predicate: Callable[[BaseEvent], bool]=None) -> BaseEvent | None`
+##### `find(event_type: str | Type[BaseEvent], *, where: Callable[[BaseEvent], bool]=None, child_of: BaseEvent | None=None, past: bool | float=True, future: bool | float=True) -> BaseEvent | None`
 
-Wait for a specific event to occur.
+Find an event matching criteria in history and/or future. This is the recommended unified method for event lookup.
+
+**Parameters:**
+
+- `event_type`: The event type string or model class to find
+- `where`: Predicate function for filtering (default: matches all)
+- `child_of`: Only match events that are descendants of this parent event
+- `past`: Controls history search behavior (default: `True`)
+  - `True`: search all history
+  - `False`: skip history search
+  - `float`: search events from last N seconds only
+- `future`: Controls future wait behavior (default: `True`)
+  - `True`: wait forever for matching event
+  - `False`: don't wait for future events
+  - `float`: wait up to N seconds for matching event
+
+```python
+# Search all history, wait up to 5s for future
+event = await bus.find(ResponseEvent, past=True, future=5)
+
+# Search last 5s of history, wait forever
+event = await bus.find(ResponseEvent, past=5, future=True)
+
+# Search last 5s of history, wait up to 5s
+event = await bus.find(ResponseEvent, past=5, future=5)
+
+# Search all history only, don't wait (instant)
+event = await bus.find(ResponseEvent, past=True, future=False)
+
+# Wait up to 5s for future only (ignore history)
+event = await bus.find(ResponseEvent, past=False, future=5)
+
+# Find child of a specific parent event
+child = await bus.find(ChildEvent, child_of=parent_event, future=5)
+
+# With custom filter
+event = await bus.find(ResponseEvent, where=lambda e: e.status == 'success', future=5)
+```
+
+##### `expect(event_type: str | Type[BaseEvent], *, include: Callable=None, exclude: Callable=None, timeout: float | None=None, past: bool | float=False, child_of: BaseEvent | None=None) -> BaseEvent | None`
+
+Wait for a specific event to occur. This is a backwards-compatible wrapper around `find()`.
+
+**Parameters:**
+
+- `event_type`: The event type string or model class to wait for
+- `include`: Filter function that must return `True` for the event to match
+- `exclude`: Filter function that must return `False` for the event to match
+- `timeout`: Maximum time to wait in seconds (None = wait forever). Maps to `future` parameter of `find()`.
+- `past`: Controls history search behavior (default: `False`)
+  - `True`: search all history first
+  - `False`: skip history search
+  - `float`: search events from last N seconds
+- `child_of`: Only match events that are descendants of this parent event
 
 ```python
 # Wait for any UserEvent
@@ -710,11 +782,39 @@ event = await bus.expect('UserEvent', timeout=30)
 # Wait with custom filter
 event = await bus.expect(
     'UserEvent',
-    predicate=lambda e: e.user_id == 'specific_user'
+    include=lambda e: e.user_id == 'specific_user',
+    timeout=30,
 )
+
+# Search history first, then wait
+event = await bus.expect('UserEvent', past=True, timeout=30)
+
+# Search last 10 seconds of history, then wait
+event = await bus.expect('UserEvent', past=10, timeout=30)
+
+# Find child event
+child = await bus.expect(ChildEvent, child_of=parent_event, timeout=5)
 
 if event is None:
     print('No matching event arrived within 30 seconds')
+```
+
+##### `event_is_child_of(event: BaseEvent, ancestor: BaseEvent) -> bool`
+
+Check if event is a descendant of ancestor (child, grandchild, etc.).
+
+```python
+if bus.event_is_child_of(child_event, parent_event):
+    print("child_event is a descendant of parent_event")
+```
+
+##### `event_is_parent_of(event: BaseEvent, descendant: BaseEvent) -> bool`
+
+Check if event is an ancestor of descendant (parent, grandparent, etc.).
+
+```python
+if bus.event_is_parent_of(parent_event, child_event):
+    print("parent_event is an ancestor of child_event")
 ```
 
 ##### `wait_until_idle(timeout: float | None=None)`
