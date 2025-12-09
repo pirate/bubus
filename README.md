@@ -311,27 +311,13 @@ When you dispatch an event that triggers child events, use `child_of` to find sp
 # Dispatch a parent event that triggers child events
 nav_event = await bus.dispatch(NavigateToUrlEvent(url="https://example.com"))
 
-# Find a child event (may have already fired, or wait for it)
-new_tab = await bus.find(TabCreatedEvent, child_of=nav_event, future=5)
+# Find a child event (already fired while NavigateToUrlEvent was being handled)
+new_tab = await bus.find(TabCreatedEvent, child_of=nav_event, past=5)
 if new_tab:
     print(f"New tab created: {new_tab.tab_id}")
 ```
 
 This solves race conditions where child events fire before you start waiting for them.
-
-#### Tree Traversal Helpers
-
-Check parent-child relationships between events:
-
-```python
-# Check if event is a descendant of another event
-if bus.event_is_child_of(child_event, parent_event):
-    print("child_event is a descendant of parent_event")
-
-# Check if event is an ancestor of another event
-if bus.event_is_parent_of(parent_event, child_event):
-    print("parent_event is an ancestor of child_event")
-```
 
 > [!IMPORTANT]
 > `find()` resolves when the event is first *dispatched* to the `EventBus`, not when it completes. Use `await event` to wait for handlers to finish.
@@ -346,11 +332,11 @@ Avoid re-running expensive work by reusing recent events. The `find()` method ma
 ```python
 # Simple debouncing: reuse event from last 10 seconds, or dispatch new
 event = (
-    await bus.find(ScreenshotEvent, past=10, future=False)  # Check last 10s of history (instant)
+    bus.find(ScreenshotEvent, past=10, future=False)  # Check last 10s of history (instant)
     or await bus.dispatch(ScreenshotEvent())
 )
 
-# More advanced: check history, wait briefly for in-flight, then dispatch
+# Advanced: check history, wait briefly for new event to appear, fallback to dispatch new event
 event = (
     await bus.find(SyncEvent, past=True, future=False)   # Check all history (instant)
     or await bus.find(SyncEvent, past=False, future=5)   # Wait up to 5s for in-flight
