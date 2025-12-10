@@ -6,19 +6,10 @@
  *
  * @example
  * ```typescript
- * import { EventBus, BaseEvent } from 'bubus'
+ * import { EventBus, Event } from 'bubus'
  *
- * // Define a typed event
- * class UserCreatedEvent extends BaseEvent<string> {
- *   user_id: string
- *   email: string
- *
- *   constructor(data: { user_id: string; email: string }) {
- *     super({ ...data, event_type: 'UserCreatedEvent' })
- *     this.user_id = data.user_id
- *     this.email = data.email
- *   }
- * }
+ * // Define a typed event - no constructor needed!
+ * class UserCreatedEvent extends Event<{ user_id: string; email: string }, string>() {}
  *
  * // Create event bus
  * const bus = new EventBus({ name: 'MyBus' })
@@ -30,13 +21,14 @@
  *
  * // Dispatch and await result
  * const event = bus.dispatch(new UserCreatedEvent({ user_id: '123', email: 'test@example.com' }))
+ * await event.completed
  * const result = await event.eventResult()
  * console.log(result) // 'User 123 created with email test@example.com'
  * ```
  */
 
 // Core classes
-export { BaseEvent, type BaseEventOptions } from './base-event.js'
+export { BaseEvent, Event, type BaseEventOptions } from './base-event.js'
 export { EventResult, type EventResultOptions } from './event-result.js'
 export {
   EventBus,

@@ -1,26 +1,18 @@
 /**
  * BaseEvent - Base class for all events
  *
- * Subclass this to define custom events with typed results.
- * Mirrors Python's `class MyEvent(BaseEvent[ResultType])` pattern.
+ * Use the Event<TData, TResult>() helper to create typed event classes without boilerplate:
  *
  * @example
  * ```typescript
- * class UserCreatedEvent extends BaseEvent<string> {
- *   user_id: string
- *   email: string
- *
- *   constructor(data: { user_id: string; email: string }) {
- *     super({ ...data, event_type: 'UserCreatedEvent' })
- *     this.user_id = data.user_id
- *     this.email = data.email
- *   }
- * }
+ * // Simple pattern - no constructor needed!
+ * class UserCreatedEvent extends Event<{ user_id: string; email: string }, string>() {}
  *
  * // Usage:
  * const event = bus.dispatch(new UserCreatedEvent({ user_id: '123', email: 'a@b.com' }))
- * await event.completed  // Wait for all handlers to finish
- * const result = await event.eventResult()  // Get first handler result
+ * event.user_id  // Typed as string
+ * await event.completed
+ * const result = await event.eventResult()
  * ```
  */
 
@@ -66,6 +58,9 @@ export class BaseEvent<TResult = unknown> {
   // Results indexed by handler_id
   event_results: Map<string, EventResult<TResult>> = new Map()
 
+  // Reference to the EventBus currently processing this event
+  private _eventBus: unknown = null
+
   // Completion signal - exposed as a promise
   private _completionPromise: Promise<this>
   private _resolveCompletion!: (value: this) => void
@@ -106,9 +101,9 @@ export class BaseEvent<TResult = unknown> {
     }
 
     // Assign validated data to this instance
-    // Note: Only assign known event_ fields to avoid overwriting private fields
+    // Assign all properties except private ones (starting with _)
     for (const [key, value] of Object.entries(validated)) {
-      if (key.startsWith('event_') || (!key.startsWith('_') && !(key in this))) {
+      if (!key.startsWith('_')) {
         this[key] = value
       }
     }
@@ -135,6 +130,32 @@ export class BaseEvent<TResult = unknown> {
    */
   get completed(): Promise<this> {
     return this._completionPromise
+  }
+
+  // ===========================================================================
+  // EventBus reference - shortcut to dispatch child events
+  // ===========================================================================
+
+  /**
+   * Get the EventBus currently processing this event.
+   * Useful for dispatching child events from within handlers.
+   *
+   * @example
+   * ```typescript
+   * async function handler(event: MyEvent) {
+   *   // Dispatch child event using the same bus
+   *   const child = event.eventBus.dispatch(new ChildEvent())
+   *   await child.completed
+   * }
+   * ```
+   */
+  get eventBus(): unknown {
+    return this._eventBus
+  }
+
+  /** @internal Set by EventBus when processing starts */
+  set eventBus(bus: unknown) {
+    this._eventBus = bus
   }
 
   // ===========================================================================
@@ -507,5 +528,38 @@ export class BaseEvent<TResult = unknown> {
   ): T {
     const data = typeof json === 'string' ? JSON.parse(json) : json
     return new this(data as BaseEventOptions)
+  }
+}
+
+// =============================================================================
+// Event Helper - Create typed event classes without boilerplate
+// =============================================================================
+
+/**
+ * Helper to create typed event classes without needing to write a constructor.
+ *
+ * @example
+ * ```typescript
+ * // Define event with typed data and result - no constructor needed!
+ * class UserCreatedEvent extends Event<{ user_id: string; email: string }, string>() {}
+ *
+ * // Usage - data is fully typed
+ * const event = new UserCreatedEvent({ user_id: '123', email: 'a@b.com' })
+ * event.user_id  // string
+ * event.email    // string
+ *
+ * // For events with no custom data
+ * class PingEvent extends Event() {}
+ * ```
+ */
+export function Event<TData extends Record<string, unknown> = Record<string, never>, TResult = unknown>() {
+  return class TypedEvent extends BaseEvent<TResult> {
+    constructor(data: TData & Partial<BaseEventOptions>) {
+      super(data as BaseEventOptions)
+    }
+  } as {
+    new (data: TData & Partial<BaseEventOptions>): BaseEvent<TResult> & TData
+    schema: typeof BaseEvent.schema
+    fromJSON: typeof BaseEvent.fromJSON
   }
 }

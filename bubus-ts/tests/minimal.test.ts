@@ -1,11 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { EventBus, BaseEvent } from '../src/index.js'
+import { EventBus, Event } from '../src/index.js'
 
-class SimpleEvent extends BaseEvent<string> {
-  constructor() {
-    super({ event_type: 'SimpleEvent' })
-  }
-}
+// Using Event helper - no constructor needed!
+class SimpleEvent extends Event<Record<string, never>, string>() {}
 
 describe('Minimal EventBus Test', () => {
   it('should complete event', async () => {

@@ -300,6 +300,9 @@ export class EventBus {
   }
 
   private async _handleEvent(event: BaseEvent): Promise<void> {
+    // Set eventBus reference so handlers can access it via event.eventBus
+    event.eventBus = this
+
     // Get applicable handlers
     const applicableHandlers = this._getApplicableHandlers(event)
 
@@ -574,6 +577,20 @@ export class EventBus {
     } finally {
       this.off(eventKey, tempHandler)
     }
+  }
+
+  /**
+   * Check if event is a descendant of ancestor (child, grandchild, etc.)
+   */
+  eventIsChildOf(event: BaseEvent, ancestor: BaseEvent): boolean {
+    return this._eventIsChildOf(event, ancestor)
+  }
+
+  /**
+   * Check if event is an ancestor of descendant (parent, grandparent, etc.)
+   */
+  eventIsParentOf(event: BaseEvent, descendant: BaseEvent): boolean {
+    return this._eventIsChildOf(descendant, event)
   }
 
   private _eventIsChildOf(event: BaseEvent, ancestor: BaseEvent): boolean {
