@@ -1,0 +1,56 @@
+{
+  "name": "bubus",
+  "version": "0.1.0",
+  "description": "Production-ready event bus library for TypeScript - Browser & Node compatible",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src tests",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "event-bus",
+    "events",
+    "pub-sub",
+    "pubsub",
+    "typescript",
+    "async",
+    "zod",
+    "validation"
+  ],
+  "author": "Nick Sweeting",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/browser-use/bubus"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "uuid": "^11.0.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}
