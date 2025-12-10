@@ -6,10 +6,13 @@
  *
  * @example
  * ```typescript
- * import { EventBus, Event } from 'bubus'
+ * import { EventBus, BaseEvent } from 'bubus'
  *
- * // Define a typed event - no constructor needed!
- * class UserCreatedEvent extends Event<{ user_id: string; email: string }, string>() {}
+ * // Define a typed event - use `declare` for fields, no constructor needed!
+ * class UserCreatedEvent extends BaseEvent<string> {
+ *   declare user_id: string
+ *   declare email: string
+ * }
  *
  * // Create event bus
  * const bus = new EventBus({ name: 'MyBus' })
@@ -28,7 +31,7 @@
  */
 
 // Core classes
-export { BaseEvent, Event, type BaseEventOptions } from './base-event.js'
+export { BaseEvent, type BaseEventOptions } from './base-event.js'
 export { EventResult, type EventResultOptions } from './event-result.js'
 export {
   EventBus,

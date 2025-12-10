@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { EventBus, Event, EventStatus } from '../src/index.js'
+import { EventBus, BaseEvent, EventStatus } from '../src/index.js'
 
-// Using Event helper - no constructor needed!
-class TestEvent extends Event<{ message: string }, string>() {}
+// Use `declare` for fields - no constructor needed!
+class TestEvent extends BaseEvent<string> {
+  declare message: string
+}
 
 describe('Simple EventBus', () => {
   it('should process an event', async () => {

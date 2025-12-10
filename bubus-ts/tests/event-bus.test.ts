@@ -1,19 +1,23 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { EventBus, Event, EventStatus } from '../src/index.js'
+import { EventBus, BaseEvent, EventStatus } from '../src/index.js'
 
 // =============================================================================
 // Test Event Classes
-// Using the Event<TData, TResult>() helper - NO constructor needed!
+// Use `declare` for custom fields - NO constructor needed!
 // event_type automatically defaults to the class name
 // =============================================================================
 
-class TestEvent extends Event<{ message: string }, string>() {}
+class TestEvent extends BaseEvent<string> {
+  declare message: string
+}
 
-class NumberEvent extends Event<{ value: number }, number>() {}
+class NumberEvent extends BaseEvent<number> {
+  declare value: number
+}
 
-class ParentEvent extends Event<Record<string, never>, string>() {}
+class ParentEvent extends BaseEvent<string> {}
 
-class ChildEvent extends Event<Record<string, never>, string>() {}
+class ChildEvent extends BaseEvent<string> {}
 
 // =============================================================================
 // Tests

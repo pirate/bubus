@@ -28,11 +28,13 @@ pnpm add bubus
 ## Quick Start
 
 ```typescript
-import { EventBus, Event } from 'bubus'
+import { EventBus, BaseEvent } from 'bubus'
 
-// Define a typed event - NO constructor needed!
-// Event<TData, TResult>() creates a properly typed class
-class UserCreatedEvent extends Event<{ user_id: string; email: string }, string>() {}
+// Define a typed event - use `declare` for fields, NO constructor needed!
+class UserCreatedEvent extends BaseEvent<string> {
+  declare user_id: string
+  declare email: string
+}
 
 // Create event bus
 const bus = new EventBus({ name: 'MyBus' })
