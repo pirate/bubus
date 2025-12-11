@@ -91,10 +91,10 @@ export class EventResult<TResult = unknown> implements PromiseLike<TResult | nul
     started_at?: string
     completed_at?: string
   }): this {
-    // Handle error conversion
+    // Handle error conversion - still mark as COMPLETED (handler finished, just with an error)
     if (data.error !== undefined) {
       this.error = data.error instanceof Error ? data.error : new Error(String(data.error))
-      this.status = EventStatus.ERROR
+      this.status = EventStatus.COMPLETED
     }
 
     // Handle result - check if it's actually an Error (common mistake)
@@ -102,15 +102,14 @@ export class EventResult<TResult = unknown> implements PromiseLike<TResult | nul
       if (data.result instanceof Error) {
         console.warn(
           `Event handler ${this.handler_name} returned an exception object, ` +
-            `auto-converting to EventResult(result=null, status="error", error=${data.result})`
+            `auto-converting to EventResult(result=null, error=${data.result})`
         )
         this.error = data.result
-        this.status = EventStatus.ERROR
         this.result = null
       } else {
         this.result = data.result
-        this.status = EventStatus.COMPLETED
       }
+      this.status = EventStatus.COMPLETED
     }
 
     if (data.status !== undefined) {
@@ -123,10 +122,7 @@ export class EventResult<TResult = unknown> implements PromiseLike<TResult | nul
     }
 
     // Set completed_at and resolve promise on completion
-    if (
-      (this.status === EventStatus.COMPLETED || this.status === EventStatus.ERROR) &&
-      !this.completed_at
-    ) {
+    if (this.status === EventStatus.COMPLETED && !this.completed_at) {
       this.completed_at = data.completed_at ?? new Date().toISOString()
       if (this.error) {
         this._rejectCompleted(this.error)

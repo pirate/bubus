@@ -50,13 +50,12 @@ export const EventStatus = {
   PENDING: 'pending',
   STARTED: 'started',
   COMPLETED: 'completed',
-  ERROR: 'error',
 } as const
 
 export type EventStatus = (typeof EventStatus)[keyof typeof EventStatus]
 
 /** Zod schema for EventStatus */
-export const EventStatusSchema = z.enum(['pending', 'started', 'completed', 'error'])
+export const EventStatusSchema = z.enum(['pending', 'started', 'completed'])
 
 // =============================================================================
 // EventResult Schema

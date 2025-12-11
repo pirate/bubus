@@ -439,7 +439,7 @@ export class EventBus {
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err))
       eventResult.update({ error })
-      await this._onEventResultChange(event, eventResult, EventStatus.ERROR)
+      await this._onEventResultChange(event, eventResult, EventStatus.COMPLETED)
 
       // Cancel pending children
       event.eventCancelPendingChildProcessing(error)

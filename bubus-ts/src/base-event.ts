@@ -245,9 +245,7 @@ export class BaseEvent<TResult = unknown> implements PromiseLike<BaseEvent<TResu
     if (this.event_results.size === 0) return this.event_processed_at
 
     const results = [...this.event_results.values()]
-    const allDone = results.every(
-      (r) => r.status === EventStatus.COMPLETED || r.status === EventStatus.ERROR
-    )
+    const allDone = results.every((r) => r.status === EventStatus.COMPLETED)
     if (!allDone) return null
 
     const completedTimes = results
@@ -275,7 +273,7 @@ export class BaseEvent<TResult = unknown> implements PromiseLike<BaseEvent<TResu
   eventIsComplete(): boolean {
     // Check all handlers are done
     for (const result of this.event_results.values()) {
-      if (result.status !== EventStatus.COMPLETED && result.status !== EventStatus.ERROR) {
+      if (result.status !== EventStatus.COMPLETED) {
         return false
       }
     }
@@ -304,9 +302,7 @@ export class BaseEvent<TResult = unknown> implements PromiseLike<BaseEvent<TResu
     }
 
     const results = [...this.event_results.values()]
-    const allDone = results.every(
-      (r) => r.status === EventStatus.COMPLETED || r.status === EventStatus.ERROR
-    )
+    const allDone = results.every((r) => r.status === EventStatus.COMPLETED)
     if (!allDone) return
 
     if (!this.eventAreAllChildrenComplete()) return
@@ -556,9 +552,7 @@ export class BaseEvent<TResult = unknown> implements PromiseLike<BaseEvent<TResu
         ? '...'
         : this.eventStatus === EventStatus.COMPLETED
           ? 'done'
-          : this.eventStatus === EventStatus.ERROR
-            ? 'error'
-            : 'running'
+          : 'running'
     const path = this.event_path.slice(1).join('>') || '?'
     return `${path}> ${this.event_type}#${this.event_id.slice(-4)} [${icon}]`
   }

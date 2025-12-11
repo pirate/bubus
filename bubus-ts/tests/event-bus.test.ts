@@ -185,7 +185,7 @@ describe('EventBus', () => {
       await bus.waitUntilIdle()
     })
 
-    it('should mark errored handlers as ERROR status', async () => {
+    it('should mark errored handlers as COMPLETED with error set', async () => {
       bus.on(TestEvent, async () => {
         throw new Error('Oops')
       })
@@ -199,7 +199,7 @@ describe('EventBus', () => {
       }
 
       const results = [...event.event_results.values()]
-      expect(results[0]?.status).toBe(EventStatus.ERROR)
+      expect(results[0]?.status).toBe(EventStatus.COMPLETED)
       expect(results[0]?.error).toBeInstanceOf(Error)
       await bus.waitUntilIdle()
     })
