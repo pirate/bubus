@@ -93,6 +93,11 @@ export class EventBus {
   private _currentEvent: BaseEvent | null = null
   private _currentHandlerId: string | null = null
 
+  // Global context for cross-bus parent tracking
+  private static _globalCurrentEvent: BaseEvent | null = null
+  private static _globalCurrentHandlerId: string | null = null
+  private static _globalCurrentBus: EventBus | null = null
+
   constructor(options: EventBusOptions = {}) {
     this.id = generateUUID7()
     this.parallelHandlers = options.parallelHandlers ?? false
@@ -249,17 +254,27 @@ export class EventBus {
    */
   dispatch<TEvent extends BaseEvent>(event: TEvent): TEvent {
     // Set parent event ID from context if not already set
-    if (event.event_parent_id === null && this._currentEvent !== null) {
-      event.event_parent_id = this._currentEvent.event_id
+    // First check local context (this bus), then global context (cross-bus)
+    if (event.event_parent_id === null) {
+      if (this._currentEvent !== null) {
+        event.event_parent_id = this._currentEvent.event_id
+      } else if (EventBus._globalCurrentEvent !== null) {
+        // Cross-bus dispatch - use global context
+        event.event_parent_id = EventBus._globalCurrentEvent.event_id
+      }
     }
 
     // Track child events - add to current handler's children
+    // First check local context, then global context for cross-bus tracking
+    const contextEvent = this._currentEvent ?? EventBus._globalCurrentEvent
+    const contextHandlerId = this._currentHandlerId ?? EventBus._globalCurrentHandlerId
+
     if (
-      this._currentHandlerId !== null &&
-      this._currentEvent !== null &&
-      event.event_id !== this._currentEvent.event_id
+      contextHandlerId !== null &&
+      contextEvent !== null &&
+      event.event_id !== contextEvent.event_id
     ) {
-      const currentResult = this._currentEvent.event_results.get(this._currentHandlerId)
+      const currentResult = contextEvent.event_results.get(contextHandlerId)
       if (currentResult) {
         currentResult.event_children.push(event)
       }
@@ -434,11 +449,19 @@ export class EventBus {
       await this._onEventChange(event, EventStatus.STARTED)
     }
 
-    // Set context for child event tracking
+    // Set context for child event tracking (local for this bus)
     const previousEvent = this._currentEvent
     const previousHandlerId = this._currentHandlerId
     this._currentEvent = event
     this._currentHandlerId = handlerId
+
+    // Set global context for cross-bus parent tracking
+    const previousGlobalEvent = EventBus._globalCurrentEvent
+    const previousGlobalHandlerId = EventBus._globalCurrentHandlerId
+    const previousGlobalBus = EventBus._globalCurrentBus
+    EventBus._globalCurrentEvent = event
+    EventBus._globalCurrentHandlerId = handlerId
+    EventBus._globalCurrentBus = this
 
     // Set global handler context flag (used by BaseEvent.completed to throw helpful errors)
     const globalObj = globalThis as unknown as { __bubus_inside_handler?: boolean }
@@ -468,9 +491,13 @@ export class EventBus {
       // Cancel pending children
       event.eventCancelPendingChildProcessing(error)
     } finally {
-      // Restore context
+      // Restore local context
       this._currentEvent = previousEvent
       this._currentHandlerId = previousHandlerId
+      // Restore global context
+      EventBus._globalCurrentEvent = previousGlobalEvent
+      EventBus._globalCurrentHandlerId = previousGlobalHandlerId
+      EventBus._globalCurrentBus = previousGlobalBus
       // Restore global handler context flag
       globalObj.__bubus_inside_handler = wasInsideHandler
     }
@@ -519,17 +546,27 @@ export class EventBus {
     // Register event in history directly (DON'T use dispatch() to avoid race with run loop)
     if (!this._eventHistory.has(event.event_id)) {
       // Set parent event ID from context if not already set
-      if (event.event_parent_id === null && this._currentEvent !== null) {
-        event.event_parent_id = this._currentEvent.event_id
+      // First check local context (this bus), then global context (cross-bus)
+      if (event.event_parent_id === null) {
+        if (this._currentEvent !== null) {
+          event.event_parent_id = this._currentEvent.event_id
+        } else if (EventBus._globalCurrentEvent !== null) {
+          // Cross-bus dispatch - use global context
+          event.event_parent_id = EventBus._globalCurrentEvent.event_id
+        }
       }
 
       // Track child events - add to current handler's children
+      // First check local context, then global context for cross-bus tracking
+      const contextEvent = this._currentEvent ?? EventBus._globalCurrentEvent
+      const contextHandlerId = this._currentHandlerId ?? EventBus._globalCurrentHandlerId
+
       if (
-        this._currentHandlerId !== null &&
-        this._currentEvent !== null &&
-        event.event_id !== this._currentEvent.event_id
+        contextHandlerId !== null &&
+        contextEvent !== null &&
+        event.event_id !== contextEvent.event_id
       ) {
-        const currentResult = this._currentEvent.event_results.get(this._currentHandlerId)
+        const currentResult = contextEvent.event_results.get(contextHandlerId)
         if (currentResult) {
           currentResult.event_children.push(event)
         }
@@ -745,7 +782,9 @@ export class EventBus {
   /**
    * Wait until the event bus is idle (no events being processed)
    */
-  async waitUntilIdle(timeout?: number): Promise<void> {
+  async waitUntilIdle(options: { timeout?: number } = {}): Promise<void> {
+    const { timeout } = options
+
     if (!this._isRunning && this._eventQueue.length === 0) {
       return
     }

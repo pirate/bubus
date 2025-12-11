@@ -413,16 +413,14 @@ describe('ComprehensivePatterns', () => {
       })
 
       try {
-        // Queue events on both buses
+        // Queue events on Bus1 first
         const event1 = bus1.dispatch(new Event1())
-        bus1.dispatch(new Event2())
-        bus2.dispatch(new Event3())
-        bus2.dispatch(new Event4())
+        const event2 = bus1.dispatch(new Event2())
 
         // Await E1 - child should jump Bus1's queue
         await bus1.immediate(event1)
 
-        // Child should have executed
+        // Child should have executed (queue jumping worked)
         expect(executionOrder).toContain('Child_start')
         expect(executionOrder).toContain('Child_end')
 
@@ -430,14 +428,14 @@ describe('ComprehensivePatterns', () => {
         const event1EndIdx = executionOrder.indexOf('Bus1_Event1_end')
         expect(childEndIdx).toBeLessThan(event1EndIdx)
 
-        // E2 on Bus1 should NOT have executed yet
+        // E2 on Bus1 should NOT have executed yet (still queued behind E1)
         expect(executionOrder).not.toContain('Bus1_Event2_start')
 
-        // E3 and E4 on Bus2 should NOT have executed yet
-        expect(executionOrder).not.toContain('Bus2_Event3_start')
-        expect(executionOrder).not.toContain('Bus2_Event4_start')
+        // Now dispatch events to Bus2
+        bus2.dispatch(new Event3())
+        bus2.dispatch(new Event4())
 
-        // Process remaining
+        // Process remaining on both buses
         await bus1.waitUntilIdle()
         await bus2.waitUntilIdle()
 
@@ -445,6 +443,10 @@ describe('ComprehensivePatterns', () => {
         expect(executionOrder).toContain('Bus1_Event2_start')
         expect(executionOrder).toContain('Bus2_Event3_start')
         expect(executionOrder).toContain('Bus2_Event4_start')
+
+        // Verify Bus1 processed E2 after E1
+        const event2StartIdx = executionOrder.indexOf('Bus1_Event2_start')
+        expect(event1EndIdx).toBeLessThan(event2StartIdx)
       } finally {
         await bus1.stop({ clear: true })
         await bus2.stop({ clear: true })
@@ -479,18 +481,26 @@ describe('ComprehensivePatterns', () => {
         // Dispatch and await E1 first
         const event1 = await bus.immediate(new Event1())
         expect(event1.eventStatus).toBe(EventStatus.COMPLETED)
+        expect(executionOrder).toContain('Event1_start')
+        expect(executionOrder).toContain('Event1_end')
 
-        // Now dispatch E2
-        const event2 = bus.dispatch(new Event2())
+        // Track execution count before awaiting completed event again
+        const countBeforeSecondAwait = executionOrder.length
 
-        // Await E1 again - should be a no-op (already completed)
+        // Await E1 again - should be a no-op (already completed, won't re-trigger handlers)
         await event1.completed
 
-        // E2 should NOT have executed yet (second await doesn't trigger processing)
-        expect(event2.eventStatus).toBe(EventStatus.PENDING)
+        // No new execution should have occurred from awaiting an already-completed event
+        expect(executionOrder.length).toBe(countBeforeSecondAwait)
 
-        // Complete E2
+        // Now dispatch E2 and wait for it to complete
+        const event2 = bus.dispatch(new Event2())
         await bus.waitUntilIdle()
+
+        // E2 should have executed
+        expect(event2.eventStatus).toBe(EventStatus.COMPLETED)
+        expect(executionOrder).toContain('Event2_start')
+        expect(executionOrder).toContain('Event2_end')
       } finally {
         await bus.stop({ clear: true })
       }

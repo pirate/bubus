@@ -98,7 +98,8 @@ export class EventResult<TResult = unknown> implements PromiseLike<TResult | nul
     }
 
     // Handle result - check if it's actually an Error (common mistake)
-    if (data.result !== undefined) {
+    // Use 'result' in data to allow undefined as a valid result value
+    if ('result' in data) {
       if (data.result instanceof Error) {
         console.warn(
           `Event handler ${this.handler_name} returned an exception object, ` +
@@ -107,7 +108,7 @@ export class EventResult<TResult = unknown> implements PromiseLike<TResult | nul
         this.error = data.result
         this.result = null
       } else {
-        this.result = data.result
+        this.result = data.result as TResult | null
       }
       this.status = EventStatus.COMPLETED
     }

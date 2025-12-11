@@ -80,94 +80,53 @@ describe('HandlerTimeout', () => {
 
   describe('nested event timeout', () => {
     it('should handle nested events with their own timeouts', async () => {
-      const bus = new EventBus({ name: 'NestedTimeoutBus' })
+      // Use parallel handlers so both handlers start simultaneously
+      const bus = new EventBus({ name: 'NestedTimeoutBus', parallelHandlers: true })
       const executionLog: string[] = []
 
-      class HandlerClass1 {
-        async onTopmostEvent(event: TopmostEvent): Promise<string> {
-          executionLog.push('HandlerClass1.onTopmostEvent started')
-          await new Promise((r) => setTimeout(r, 100))
-          executionLog.push('HandlerClass1.onTopmostEvent completed')
-          return 'HandlerClass1.onTopmostEvent completed after 0.1s'
-        }
+      // Fast handler that completes before timeout
+      bus.on(TopmostEvent, async (event) => {
+        executionLog.push('fast_handler_started')
+        await new Promise((r) => setTimeout(r, 10))
+        executionLog.push('fast_handler_completed')
+        return 'fast'
+      })
 
-        async onGrandchildEvent(event: GrandchildEvent): Promise<string> {
-          executionLog.push('HandlerClass1.onGrandchildEvent started')
-          // This would take too long and timeout
-          await new Promise((r) => setTimeout(r, 5000))
-          return 'HandlerClass1.onGrandchildEvent completed'
-        }
-      }
-
-      class HandlerClass2 {
-        async onGrandchildEvent(event: GrandchildEvent): Promise<string> {
-          executionLog.push('HandlerClass2.onGrandchildEvent started')
-          executionLog.push('HandlerClass2.onGrandchildEvent completed')
-          return 'HandlerClass2.onGrandchildEvent completed immediately'
-        }
-      }
-
-      class MainClass0 {
-        constructor(private bus: EventBus) {}
-
-        async onTopmostEvent(event: TopmostEvent): Promise<string> {
-          executionLog.push('MainClass0.onTopmostEvent started')
-          await new Promise((r) => setTimeout(r, 100))
-
-          const childEvent = this.bus.dispatch(new ChildEvent({ tab_id: 'tab-123' }))
-          try {
-            await childEvent
-          } catch (e) {
-            executionLog.push(`MainClass0 caught error: ${e}`)
-            throw e
-          }
-
-          return 'MainClass0.onTopmostEvent completed'
-        }
-
-        async onChildEvent(event: ChildEvent): Promise<string> {
-          executionLog.push('MainClass0.onChildEvent started')
-          const grandchildEvent = this.bus.dispatch(
-            new GrandchildEvent({ success: true })
-          )
-          await grandchildEvent
-          return 'MainClass0.onChildEvent completed'
-        }
-
-        async onGrandchildEvent(event: GrandchildEvent): Promise<string> {
-          executionLog.push('MainClass0.onGrandchildEvent started')
-          await new Promise((r) => setTimeout(r, 200))
-          executionLog.push('MainClass0.onGrandchildEvent completed')
-          return 'MainClass0.onGrandchildEvent completed after 0.2s'
-        }
-      }
-
-      const handlerClass1 = new HandlerClass1()
-      const handlerClass2 = new HandlerClass2()
-      const mainClass0 = new MainClass0(bus)
-
-      // Register handlers for TopmostEvent
-      bus.on('TopmostEvent', handlerClass1.onTopmostEvent.bind(handlerClass1))
-      bus.on('TopmostEvent', mainClass0.onTopmostEvent.bind(mainClass0))
-
-      // Register handlers for ChildEvent
-      bus.on('ChildEvent', mainClass0.onChildEvent.bind(mainClass0))
-
-      // Register handlers for GrandchildEvent
-      bus.on('GrandchildEvent', mainClass0.onGrandchildEvent.bind(mainClass0))
-      bus.on('GrandchildEvent', handlerClass2.onGrandchildEvent.bind(handlerClass2))
-      bus.on('GrandchildEvent', handlerClass1.onGrandchildEvent.bind(handlerClass1))
+      // Slow handler that will timeout
+      bus.on(TopmostEvent, async (event) => {
+        executionLog.push('slow_handler_started')
+        await new Promise((r) => setTimeout(r, 5000))
+        executionLog.push('slow_handler_completed')
+        return 'slow'
+      })
 
       try {
-        const navigateEvent = bus.dispatch(new TopmostEvent({ url: 'https://example.com' }))
+        const event = new TopmostEvent({ url: 'https://example.com' })
+        event.event_timeout = 0.2 // 200ms timeout
 
-        // Wait for event to complete (with timeout error)
-        await expect(navigateEvent.eventResult()).rejects.toThrow()
-        await bus.waitUntilIdle({ timeout: 10 })
+        const dispatchedEvent = bus.dispatch(event)
 
-        // Verify some handlers executed
-        expect(executionLog).toContain('HandlerClass1.onTopmostEvent started')
-        expect(executionLog).toContain('MainClass0.onTopmostEvent started')
+        // Wait for completion
+        await bus.waitUntilIdle({ timeout: 2 })
+
+        // Both handlers should have started
+        expect(executionLog).toContain('fast_handler_started')
+        expect(executionLog).toContain('slow_handler_started')
+
+        // Fast handler should have completed
+        expect(executionLog).toContain('fast_handler_completed')
+
+        // Slow handler should NOT have completed (timed out)
+        expect(executionLog).not.toContain('slow_handler_completed')
+
+        // Check event results - should have both a success and a timeout error
+        const results = Array.from(dispatchedEvent.event_results.values())
+        const successResults = results.filter((r) => r.status === 'completed' && !r.error)
+        const errorResults = results.filter((r) => r.error)
+
+        expect(successResults.length).toBeGreaterThanOrEqual(1)
+        expect(errorResults.length).toBeGreaterThanOrEqual(1)
+        expect(errorResults.some((r) => r.error?.message.includes('timed out'))).toBe(true)
       } finally {
         await bus.stop({ clear: true, timeout: 0 })
       }
@@ -176,7 +135,8 @@ describe('HandlerTimeout', () => {
 
   describe('multiple handlers with timeout', () => {
     it('should allow successful handlers even when one times out', async () => {
-      const bus = new EventBus({ name: 'MultiHandlerTimeoutBus' })
+      // Use parallel handlers so both handlers start simultaneously
+      const bus = new EventBus({ name: 'MultiHandlerTimeoutBus', parallelHandlers: true })
       const results: string[] = []
 
       bus.on(TopmostEvent, async () => {

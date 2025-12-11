@@ -390,12 +390,13 @@ describe('ParentEventTracking', () => {
       })
 
       const parent = new ParentEvent({ message: 'completion_test' })
-      const parentEvent = bus.dispatch(parent)
+      bus.dispatch(parent)
 
       // At this point, parent handler hasn't run yet, so no children exist
       expect(parent.eventAreAllChildrenComplete()).toBe(true) // No children yet
 
-      await parentEvent
+      // Wait for all events to complete (parent + children)
+      await bus.waitUntilIdle()
 
       // Now all children should be complete
       expect(parent.eventAreAllChildrenComplete()).toBe(true)
