@@ -45,11 +45,11 @@ bus.on(UserCreatedEvent, async (event) => {
 })
 
 // Dispatch and await result
-const event = bus.dispatch(new UserCreatedEvent({
+const event = await bus.dispatch(new UserCreatedEvent({
   user_id: '123',
   email: 'test@example.com'
-}))
-await event.completed  // Wait for all handlers to finish
+}))  // `await event` waits for all handlers to finish and returns the event
+
 const result = await event.eventResult()
 console.log(result) // 'User 123 created with email test@example.com'
 ```
@@ -74,7 +74,7 @@ Events dispatched from within a handler automatically track their parent:
 ```typescript
 bus.on(ParentEvent, async (event) => {
   // Use event.eventBus to dispatch child events
-  const child = (event.eventBus as EventBus).dispatch(new ChildEvent())
+  const child = event.eventBus!.dispatch(new ChildEvent())
 
   // child.event_parent_id is automatically set to event.event_id
   console.log(child.event_parent_id === event.event_id) // true
@@ -83,8 +83,7 @@ bus.on(ParentEvent, async (event) => {
 })
 
 // After processing, access children
-const parent = bus.dispatch(new ParentEvent())
-await parent.completed
+const parent = await bus.dispatch(new ParentEvent())
 console.log(parent.eventChildren) // [ChildEvent, ...]
 ```
 
@@ -100,8 +99,7 @@ mainBus.on('*', async (event) => {
 })
 
 // Events flow through with path tracking (prevents loops)
-const event = mainBus.dispatch(new LoginEvent())
-await event.completed
+const event = await mainBus.dispatch(new LoginEvent())
 console.log(event.event_path) // ['MainBus', 'AuthBus']
 ```
 
@@ -192,7 +190,7 @@ bus.middlewares.push({
 | Python | TypeScript | Notes |
 |--------|------------|-------|
 | `class Foo(BaseEvent[str]):` | `class Foo extends BaseEvent<string>` | Same pattern |
-| `await event` | `await event.completed` | Use `.completed` in TS |
+| `await event` | `await event` | Events implement PromiseLike |
 | `event.event_status` | `event.eventStatus` | camelCase for computed |
 | `event.event_result()` | `event.eventResult()` | camelCase for methods |
 | `event.event_bus` | `event.eventBus` | Access current bus |

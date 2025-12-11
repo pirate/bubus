@@ -132,3 +132,13 @@ export type EventHandler<TEvent = unknown, TResult = unknown> = (
 
 /** Event pattern type - event type name, wildcard, or event class */
 export type EventPattern = string | '*'
+
+/**
+ * Interface for EventBus to avoid circular imports.
+ * BaseEvent uses this to type the eventBus property.
+ */
+export interface IEventBus {
+  readonly id: string
+  readonly name: string
+  dispatch(event: unknown): unknown
+}

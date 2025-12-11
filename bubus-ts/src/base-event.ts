@@ -21,7 +21,7 @@
 
 import { z } from 'zod'
 import { EventResult } from './event-result.js'
-import { BaseEventSchema, EventStatus, type EventResultFilter } from './schemas.js'
+import { BaseEventSchema, EventStatus, type EventResultFilter, type IEventBus } from './schemas.js'
 import { generateUUID7, nowISO } from './utils.js'
 
 const LIBRARY_VERSION = '0.1.0'
@@ -43,7 +43,7 @@ export interface BaseEventOptions {
  * Base event class - subclass this to define custom events.
  * Use `await event.completed` to wait for all handlers to finish.
  */
-export class BaseEvent<TResult = unknown> {
+export class BaseEvent<TResult = unknown> implements PromiseLike<BaseEvent<TResult>> {
   // Override in subclasses via schema.extend({ event_result_type: z.whatever() })
   static schema: z.ZodType = BaseEventSchema
 
@@ -62,11 +62,11 @@ export class BaseEvent<TResult = unknown> {
   event_results: Map<string, EventResult<TResult>> = new Map()
 
   // Reference to the EventBus currently processing this event
-  private _eventBus: unknown = null
+  private _eventBus: IEventBus | null = null
 
-  // Completion signal - exposed as a promise
-  private _completionPromise: Promise<this>
-  private _resolveCompletion!: (value: this) => void
+  // Completion signal - exposed as a promise (resolves to void internally to avoid thenable deadlock)
+  private _completionPromise: Promise<void>
+  private _resolveCompletion!: () => void
 
   // Allow arbitrary properties for event data
   [key: string]: unknown
@@ -75,7 +75,9 @@ export class BaseEvent<TResult = unknown> {
     const ThisClass = this.constructor as typeof BaseEvent
 
     // Set up completion promise FIRST before any assignments
-    this._completionPromise = new Promise<this>((resolve) => {
+    // NOTE: Resolves to void internally, then transforms to `this` in completed/then
+    // This avoids thenable deadlock when resolving Promise with a PromiseLike object
+    this._completionPromise = new Promise<void>((resolve) => {
       this._resolveCompletion = resolve
     })
 
@@ -129,10 +131,66 @@ export class BaseEvent<TResult = unknown> {
 
   /**
    * Promise that resolves when all handlers have completed.
-   * Use `await event.completed` to wait for processing to finish.
+   * Use `await event` or `await event.completed` to wait for processing to finish.
    */
   get completed(): Promise<this> {
-    return this._completionPromise
+    const self = this
+    return new Promise((resolve) => {
+      self._completionPromise.then(() => {
+        // Shadow prototype's `then` with undefined to prevent thenable detection
+        Object.defineProperty(self, 'then', { value: undefined, writable: true, configurable: true })
+        resolve(self)
+        // Restore by deleting instance property (reveals prototype's `then` again)
+        delete (self as { then?: unknown }).then
+      })
+    })
+  }
+
+  /**
+   * PromiseLike implementation - allows `await event` to work directly.
+   * Resolves to the event itself when all handlers have completed.
+   *
+   * NOTE: Uses a workaround to prevent infinite thenable unwrapping by
+   * temporarily shadowing the `then` method on the instance during resolution.
+   */
+  then<TResult1 = this, TResult2 = never>(
+    onfulfilled?: ((value: this) => TResult1 | PromiseLike<TResult1>) | null,
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
+  ): PromiseLike<TResult1 | TResult2> {
+    const self = this
+
+    return new Promise((resolve, reject) => {
+      self._completionPromise.then(
+        () => {
+          // Shadow prototype's `then` with undefined to prevent thenable detection
+          Object.defineProperty(self, 'then', { value: undefined, writable: true, configurable: true })
+
+          try {
+            if (onfulfilled) {
+              resolve(onfulfilled(self))
+            } else {
+              resolve(self as unknown as TResult1)
+            }
+          } catch (e) {
+            reject(e)
+          } finally {
+            // Restore by deleting instance property (reveals prototype's `then` again)
+            delete (self as { then?: unknown }).then
+          }
+        },
+        (reason) => {
+          if (onrejected) {
+            try {
+              resolve(onrejected(reason) as TResult1)
+            } catch (e) {
+              reject(e)
+            }
+          } else {
+            reject(reason)
+          }
+        }
+      )
+    })
   }
 
   // ===========================================================================
@@ -142,22 +200,23 @@ export class BaseEvent<TResult = unknown> {
   /**
    * Get the EventBus currently processing this event.
    * Useful for dispatching child events from within handlers.
+   * Returns null if event is not being processed by any bus.
    *
    * @example
    * ```typescript
    * async function handler(event: MyEvent) {
    *   // Dispatch child event using the same bus
-   *   const child = event.eventBus.dispatch(new ChildEvent())
-   *   await child.completed
+   *   const child = event.eventBus!.dispatch(new ChildEvent())
+   *   await child
    * }
    * ```
    */
-  get eventBus(): unknown {
+  get eventBus(): IEventBus | null {
     return this._eventBus
   }
 
   /** @internal Set by EventBus when processing starts */
-  set eventBus(bus: unknown) {
+  set eventBus(bus: IEventBus | null) {
     this._eventBus = bus
   }
 
@@ -240,7 +299,7 @@ export class BaseEvent<TResult = unknown> {
   eventMarkCompleteIfAllHandlersCompleted(): void {
     if (this.event_results.size === 0) {
       this.event_processed_at = this.event_processed_at ?? nowISO()
-      this._resolveCompletion(this)
+      this._resolveCompletion()
       return
     }
 
@@ -253,7 +312,7 @@ export class BaseEvent<TResult = unknown> {
     if (!this.eventAreAllChildrenComplete()) return
 
     this.event_processed_at = this.event_processed_at ?? nowISO()
-    this._resolveCompletion(this)
+    this._resolveCompletion()
   }
 
   // ===========================================================================

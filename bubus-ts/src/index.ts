@@ -64,6 +64,7 @@ export {
   type EventResultFilter,
   type EventHandler,
   type EventPattern,
+  type IEventBus,
 } from './schemas.js'
 
 // Utilities

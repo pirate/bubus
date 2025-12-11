@@ -553,11 +553,17 @@ export class EventBus {
     }
 
     // Wait for future events
-    const deferred = createDeferred<TEvent | null>()
+    // NOTE: We store the event reference and resolve with a marker value to avoid
+    // thenable unwrapping deadlock. The event is a PromiseLike and resolving with
+    // it would wait for the event to complete, which creates a circular wait since
+    // this handler needs to complete first.
+    let foundEvent: TEvent | null = null
+    const deferred = createDeferred<boolean>()
 
     const tempHandler: AsyncEventHandler = async (event: BaseEvent) => {
       if (matches(event)) {
-        deferred.resolve(event as TEvent)
+        foundEvent = event as TEvent
+        deferred.resolve(true)
       }
     }
 
@@ -565,15 +571,27 @@ export class EventBus {
 
     try {
       if (future === true) {
-        return await deferred.promise
+        await deferred.promise
       } else {
         // Wait with timeout
-        return await this._withTimeout(
+        await this._withTimeout(
           deferred.promise,
           future * 1000,
           'Find timeout'
         ).catch(() => null)
       }
+      // Shadow `then` on the event before returning to prevent thenable unwrapping
+      // which would cause a deadlock (the event's then() waits for completion,
+      // but the handler that found it hasn't completed yet)
+      if (foundEvent && typeof foundEvent.then === 'function') {
+        Object.defineProperty(foundEvent, 'then', { value: undefined, writable: true, configurable: true })
+        // Use queueMicrotask to restore after the return value is captured
+        const event = foundEvent
+        queueMicrotask(() => {
+          delete (event as { then?: unknown }).then
+        })
+      }
+      return foundEvent
     } finally {
       this.off(eventKey, tempHandler)
     }

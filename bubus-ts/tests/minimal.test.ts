@@ -8,24 +8,15 @@ describe('Minimal EventBus Test', () => {
   it('should complete event', async () => {
     const bus = new EventBus({ name: 'MinimalBus' })
 
-    bus.on(SimpleEvent, async (event) => {
-      console.log('HANDLER: executing')
+    bus.on(SimpleEvent, async () => {
       return 'done'
     })
 
-    console.log('TEST: dispatching')
-    const event = bus.dispatch(new SimpleEvent())
-    console.log('TEST: dispatched, now awaiting')
+    const event = await bus.dispatch(new SimpleEvent())
 
-    // Try awaiting completion
-    try {
-      const completedEvent = await event.completed
-      console.log('TEST: event completed', completedEvent?.event_type)
-    } catch (err) {
-      console.log('TEST: error', err)
-    }
+    expect(event.event_type).toBe('SimpleEvent')
+    expect(await event.eventResult()).toBe('done')
 
-    console.log('TEST: done')
     await bus.stop({ clear: true })
-  }, 15000)
+  })
 })
