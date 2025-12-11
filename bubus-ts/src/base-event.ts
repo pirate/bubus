@@ -42,8 +42,9 @@ export interface BaseEventOptions {
 /**
  * Base event class - subclass this to define custom events.
  * Use `await event.completed` to wait for all handlers to finish.
+ * Use `await bus.immediate(event)` to process immediately (queue jumping).
  */
-export class BaseEvent<TResult = unknown> implements PromiseLike<BaseEvent<TResult>> {
+export class BaseEvent<TResult = unknown> {
   // Override in subclasses via schema.extend({ event_result_type: z.whatever() })
   static schema: z.ZodType = BaseEventSchema
 
@@ -126,71 +127,36 @@ export class BaseEvent<TResult = unknown> implements PromiseLike<BaseEvent<TResu
   }
 
   // ===========================================================================
-  // Completion Promise - use `await event.completed`
+  // Completion Promise - use `await event.completed` (outside handlers only!)
   // ===========================================================================
 
   /**
    * Promise that resolves when all handlers have completed.
-   * Use `await event` or `await event.completed` to wait for processing to finish.
+   * Use `await event.completed` to wait for processing to finish.
+   *
+   * WARNING: Cannot be used inside event handlers! Inside handlers, use:
+   * - `event.eventBus.dispatch(childEvent)` - queue for async processing (no await)
+   * - `await event.eventBus.immediate(childEvent)` - synchronous queue jumping
+   *
+   * @throws Error if called inside an event handler
    */
   get completed(): Promise<this> {
-    const self = this
-    return new Promise((resolve) => {
-      self._completionPromise.then(() => {
-        // Shadow prototype's `then` with undefined to prevent thenable detection
-        Object.defineProperty(self, 'then', { value: undefined, writable: true, configurable: true })
-        resolve(self)
-        // Restore by deleting instance property (reveals prototype's `then` again)
-        delete (self as { then?: unknown }).then
-      })
-    })
-  }
+    // Check global handler context flag (set by EventBus during handler execution)
+    const insideHandler =
+      (globalThis as unknown as { __bubus_inside_handler?: boolean }).__bubus_inside_handler ?? false
 
-  /**
-   * PromiseLike implementation - allows `await event` to work directly.
-   * Resolves to the event itself when all handlers have completed.
-   *
-   * NOTE: Uses a workaround to prevent infinite thenable unwrapping by
-   * temporarily shadowing the `then` method on the instance during resolution.
-   */
-  then<TResult1 = this, TResult2 = never>(
-    onfulfilled?: ((value: this) => TResult1 | PromiseLike<TResult1>) | null,
-    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
-  ): PromiseLike<TResult1 | TResult2> {
-    const self = this
-
-    return new Promise((resolve, reject) => {
-      self._completionPromise.then(
-        () => {
-          // Shadow prototype's `then` with undefined to prevent thenable detection
-          Object.defineProperty(self, 'then', { value: undefined, writable: true, configurable: true })
-
-          try {
-            if (onfulfilled) {
-              resolve(onfulfilled(self))
-            } else {
-              resolve(self as unknown as TResult1)
-            }
-          } catch (e) {
-            reject(e)
-          } finally {
-            // Restore by deleting instance property (reveals prototype's `then` again)
-            delete (self as { then?: unknown }).then
-          }
-        },
-        (reason) => {
-          if (onrejected) {
-            try {
-              resolve(onrejected(reason) as TResult1)
-            } catch (e) {
-              reject(e)
-            }
-          } else {
-            reject(reason)
-          }
-        }
+    // Only throw if we're inside a handler AND the event is not yet complete
+    // Awaiting an already-completed event is fine (no deadlock possible)
+    if (insideHandler && this.eventStatus !== EventStatus.COMPLETED) {
+      throw new Error(
+        'Cannot use await event.completed inside an event handler (will deadlock).\n' +
+          'Use one of these patterns instead:\n' +
+          '  • event.eventBus.dispatch(childEvent) - queue for async processing (no await)\n' +
+          '  • await event.eventBus.immediate(childEvent) - synchronous queue jumping'
       )
-    })
+    }
+
+    return this._completionPromise.then(() => this)
   }
 
   // ===========================================================================

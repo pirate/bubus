@@ -95,10 +95,29 @@ export class EventBus {
 
   constructor(options: EventBusOptions = {}) {
     this.id = generateUUID7()
-    this.name = options.name ?? `EventBus_${this.id.slice(-8)}`
     this.parallelHandlers = options.parallelHandlers ?? false
     this.maxHistorySize = options.maxHistorySize ?? 50
     this.middlewares = []
+
+    // Handle name conflict detection
+    const requestedName = options.name ?? `EventBus_${this.id.slice(-8)}`
+    const existingNames = new Set(Array.from(EventBus.allInstances).map((b) => b.name))
+
+    if (existingNames.has(requestedName)) {
+      console.warn(
+        `EventBus with name '${requestedName}' already exists. Auto-generating unique name.`
+      )
+      // Generate unique name with suffix
+      let suffix = 1
+      let uniqueName = `${requestedName}_${suffix}`
+      while (existingNames.has(uniqueName)) {
+        suffix++
+        uniqueName = `${requestedName}_${suffix}`
+      }
+      this.name = uniqueName
+    } else {
+      this.name = requestedName
+    }
 
     // Register this instance
     EventBus.allInstances.add(this)
@@ -421,6 +440,11 @@ export class EventBus {
     this._currentEvent = event
     this._currentHandlerId = handlerId
 
+    // Set global handler context flag (used by BaseEvent.completed to throw helpful errors)
+    const globalObj = globalThis as unknown as { __bubus_inside_handler?: boolean }
+    const wasInsideHandler = globalObj.__bubus_inside_handler ?? false
+    globalObj.__bubus_inside_handler = true
+
     try {
       // Execute with timeout if specified
       let resultValue: unknown
@@ -447,11 +471,101 @@ export class EventBus {
       // Restore context
       this._currentEvent = previousEvent
       this._currentHandlerId = previousHandlerId
+      // Restore global handler context flag
+      globalObj.__bubus_inside_handler = wasInsideHandler
     }
   }
 
+  /**
+   * Process an event immediately, bypassing the queue (queue jumping).
+   * Use this when a handler needs to await a child event it just dispatched.
+   *
+   * @param event - The event to process immediately
+   * @returns The completed event
+   *
+   * @example
+   * ```typescript
+   * bus.on(ParentEvent, async (event) => {
+   *   // Dispatch child and process immediately (queue jumping)
+   *   const child = await bus.immediate(new ChildEvent())
+   *   return `child result: ${await child.eventResult()}`
+   * })
+   * ```
+   */
+  async immediate<TEvent extends BaseEvent>(event: TEvent): Promise<TEvent> {
+    // If already completed, just return
+    if (event.eventStatus === EventStatus.COMPLETED) {
+      return event
+    }
+
+    // Check if THIS bus has already started processing this event
+    // (different from another bus having processed it - e.g., during forwarding)
+    const thisUBusResults = [...event.event_results.values()].filter(
+      (r) => r.eventbus_id === this.id
+    )
+
+    if (thisUBusResults.length > 0) {
+      // This bus has already started processing - wait for our results to complete
+      const pendingResults = thisUBusResults.filter(
+        (r) => r.status !== EventStatus.COMPLETED
+      )
+      if (pendingResults.length > 0) {
+        await Promise.all(pendingResults)
+      }
+      event.eventMarkCompleteIfAllHandlersCompleted()
+      return event
+    }
+
+    // Register event in history directly (DON'T use dispatch() to avoid race with run loop)
+    if (!this._eventHistory.has(event.event_id)) {
+      // Set parent event ID from context if not already set
+      if (event.event_parent_id === null && this._currentEvent !== null) {
+        event.event_parent_id = this._currentEvent.event_id
+      }
+
+      // Track child events - add to current handler's children
+      if (
+        this._currentHandlerId !== null &&
+        this._currentEvent !== null &&
+        event.event_id !== this._currentEvent.event_id
+      ) {
+        const currentResult = this._currentEvent.event_results.get(this._currentHandlerId)
+        if (currentResult) {
+          currentResult.event_children.push(event)
+        }
+      }
+
+      // Add this EventBus to the event_path if not already there
+      if (!event.event_path.includes(this.name)) {
+        event.event_path.push(this.name)
+      }
+
+      // Add to history (but NOT to queue - we're processing immediately)
+      this._eventHistory.set(event.event_id, event)
+
+      // Notify middlewares
+      this._onEventChange(event, EventStatus.PENDING)
+
+      // Clean up excess events
+      if (this.maxHistorySize !== null && this._eventHistory.size > this.maxHistorySize) {
+        this._cleanupEventHistory()
+      }
+    }
+
+    // Remove from queue if somehow present
+    const queueIndex = this._eventQueue.indexOf(event)
+    if (queueIndex !== -1) {
+      this._eventQueue.splice(queueIndex, 1)
+    }
+
+    // Process the event immediately
+    await this._handleEvent(event)
+
+    return event
+  }
+
   private async _withTimeout<T>(
-    promise: Promise<T>,
+    promiseOrValue: Promise<T> | T,
     timeoutMs: number,
     message: string
   ): Promise<T> {
@@ -460,7 +574,8 @@ export class EventBus {
         reject(new Error(message))
       }, timeoutMs)
 
-      promise
+      // Wrap in Promise.resolve to handle both Promise and non-Promise values
+      Promise.resolve(promiseOrValue)
         .then((result) => {
           clearTimeout(timeoutId)
           resolve(result)
@@ -472,8 +587,10 @@ export class EventBus {
     })
   }
 
-  private _propagateParentCompletion(event: BaseEvent): void {
+  private _propagateParentCompletion(event: BaseEvent, visited: Set<string> = new Set()): void {
     if (!event.event_parent_id) return
+    if (visited.has(event.event_id)) return // Prevent infinite recursion
+    visited.add(event.event_id)
 
     // Find parent in any bus's history
     let parentEvent: BaseEvent | undefined
@@ -484,7 +601,7 @@ export class EventBus {
 
     if (parentEvent) {
       parentEvent.eventMarkCompleteIfAllHandlersCompleted()
-      this._propagateParentCompletion(parentEvent)
+      this._propagateParentCompletion(parentEvent, visited)
     }
   }
 
@@ -579,17 +696,6 @@ export class EventBus {
           future * 1000,
           'Find timeout'
         ).catch(() => null)
-      }
-      // Shadow `then` on the event before returning to prevent thenable unwrapping
-      // which would cause a deadlock (the event's then() waits for completion,
-      // but the handler that found it hasn't completed yet)
-      if (foundEvent && typeof foundEvent.then === 'function') {
-        Object.defineProperty(foundEvent, 'then', { value: undefined, writable: true, configurable: true })
-        // Use queueMicrotask to restore after the return value is captured
-        const event = foundEvent
-        queueMicrotask(() => {
-          delete (event as { then?: unknown }).then
-        })
       }
       return foundEvent
     } finally {

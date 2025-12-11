@@ -14,7 +14,7 @@ describe('Simple EventBus', () => {
       return `Received: ${event.message}`
     })
 
-    const event = await bus.dispatch(new TestEvent({ message: 'Hello' }))
+    const event = await bus.immediate(new TestEvent({ message: 'Hello' }))
 
     expect(event.eventStatus).toBe(EventStatus.COMPLETED)
     expect(await event.eventResult()).toBe('Received: Hello')
