@@ -463,11 +463,6 @@ export class EventBus {
     EventBus._globalCurrentHandlerId = handlerId
     EventBus._globalCurrentBus = this
 
-    // Set global handler context flag (used by BaseEvent.completed to throw helpful errors)
-    const globalObj = globalThis as unknown as { __bubus_inside_handler?: boolean }
-    const wasInsideHandler = globalObj.__bubus_inside_handler ?? false
-    globalObj.__bubus_inside_handler = true
-
     try {
       // Execute with timeout if specified
       let resultValue: unknown
@@ -498,8 +493,6 @@ export class EventBus {
       EventBus._globalCurrentEvent = previousGlobalEvent
       EventBus._globalCurrentHandlerId = previousGlobalHandlerId
       EventBus._globalCurrentBus = previousGlobalBus
-      // Restore global handler context flag
-      globalObj.__bubus_inside_handler = wasInsideHandler
     }
   }
 

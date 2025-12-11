@@ -138,24 +138,11 @@ export class BaseEvent<TResult = unknown> {
    * - `event.eventBus.dispatch(childEvent)` - queue for async processing (no await)
    * - `await event.eventBus.immediate(childEvent)` - synchronous queue jumping
    *
-   * @throws Error if called inside an event handler
+   * NOTE: Be careful not to await event.completed from within a handler for the
+   * SAME event - this will deadlock. Use bus.immediate() for child events that
+   * need to complete before the handler continues.
    */
   get completed(): Promise<this> {
-    // Check global handler context flag (set by EventBus during handler execution)
-    const insideHandler =
-      (globalThis as unknown as { __bubus_inside_handler?: boolean }).__bubus_inside_handler ?? false
-
-    // Only throw if we're inside a handler AND the event is not yet complete
-    // Awaiting an already-completed event is fine (no deadlock possible)
-    if (insideHandler && this.eventStatus !== EventStatus.COMPLETED) {
-      throw new Error(
-        'Cannot use await event.completed inside an event handler (will deadlock).\n' +
-          'Use one of these patterns instead:\n' +
-          '  • event.eventBus.dispatch(childEvent) - queue for async processing (no await)\n' +
-          '  • await event.eventBus.immediate(childEvent) - synchronous queue jumping'
-      )
-    }
-
     return this._completionPromise.then(() => this)
   }
 

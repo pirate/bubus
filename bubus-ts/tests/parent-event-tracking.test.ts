@@ -291,10 +291,9 @@ describe('ParentEventTracking', () => {
       })
 
       const parent = new ParentEvent({ message: 'test_children_tracking' })
-      const parentEvent = bus.dispatch(parent)
+      bus.dispatch(parent)
 
-      await bus.waitUntilIdle()
-      await parentEvent
+      await parent.completed
 
       expect(parent.eventChildren).toHaveLength(3)
       for (let i = 0; i < 3; i++) {
@@ -322,9 +321,8 @@ describe('ParentEventTracking', () => {
       })
 
       const parent = new ParentEvent({ message: 'nested_test' })
-      const parentEvent = bus.dispatch(parent)
-      await bus.waitUntilIdle()
-      await parentEvent
+      bus.dispatch(parent)
+      await parent.completed
 
       expect(parent.eventChildren).toHaveLength(1)
       const child = parent.eventChildren[0] as ChildEvent
@@ -340,9 +338,8 @@ describe('ParentEventTracking', () => {
       })
 
       const parent = new ParentEvent({ message: 'no_children_test' })
-      const parentEvent = bus.dispatch(parent)
-      await bus.waitUntilIdle()
-      await parentEvent
+      bus.dispatch(parent)
+      await parent.completed
 
       expect(parent.eventChildren).toHaveLength(0)
     })
@@ -357,10 +354,9 @@ describe('ParentEventTracking', () => {
         bus.on('*', bus2.dispatch.bind(bus2))
 
         const parent = new ParentEvent({ message: 'forward_test' })
-        const parentEvent = bus.dispatch(parent)
+        bus.dispatch(parent)
         await bus.waitUntilIdle()
         await bus2.waitUntilIdle()
-        await parentEvent
 
         // Parent should have no children (forwarding doesn't create children)
         expect(parent.eventChildren).toHaveLength(0)
@@ -395,8 +391,8 @@ describe('ParentEventTracking', () => {
       // At this point, parent handler hasn't run yet, so no children exist
       expect(parent.eventAreAllChildrenComplete()).toBe(true) // No children yet
 
-      // Wait for all events to complete (parent + children)
-      await bus.waitUntilIdle()
+      // Wait for parent event to complete (includes waiting for children)
+      await parent.completed
 
       // Now all children should be complete
       expect(parent.eventAreAllChildrenComplete()).toBe(true)
